@@ -1,0 +1,44 @@
+{
+	"name": "slnmix",
+	"version": "0.1.0",
+	"description": "Repomix 互換フォーマットで .sln / .vbproj を 1 ファイルにエクスポートする CLI。ディレクトリ走査ではなくソリューションの論理構成(Link・DependentUpon 解決済み)に基づく。レガシー VB.NET / Shift_JIS 対応。",
+	"license": "MIT",
+	"bin": {
+		"slnmix": "dist/cli.js"
+	},
+	"files": [
+		"dist"
+	],
+	"engines": {
+		"node": ">=18.11"
+	},
+	"keywords": [
+		"repomix",
+		"sln",
+		"vbproj",
+		"vb.net",
+		"msbuild",
+		"legacy",
+		"visual-studio",
+		"llm",
+		"ai"
+	],
+	"scripts": {
+		"build": "tsc -p tsconfig.build.json",
+		"check-types": "tsc --noEmit",
+		"compile-tests": "tsc -p . --outDir out",
+		"test": "npm run compile-tests && mocha \"out/test/**/*.test.js\" --ui tdd",
+		"prepublishOnly": "npm run build"
+	},
+	"dependencies": {
+		"fast-xml-parser": "^5.10.1",
+		"iconv-lite": "^0.7.3",
+		"ignore": "^7.0.6"
+	},
+	"devDependencies": {
+		"@types/mocha": "^10.0.10",
+		"@types/node": "24.x",
+		"mocha": "^11.7.5",
+		"typescript": "^6.0.3"
+	}
+}
