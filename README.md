@@ -22,6 +22,8 @@ DependentUpon 解決済み)に基づいてエクスポートします。
 
 - 文字コードを自動判定(BOM / UTF-8 / Shift_JIS(CP932))して UTF-8 に統一
 - 認証情報らしき値(`Password=` / APIキー等)を既定で `[MASKED]` に自動置換
+  (`パスワード` / `ﾊﾟｽﾜｰﾄﾞ` 等の日本語変数名・キー名、UI サマリー生成前の
+  Designer ソースにも適用)
 - `.gitignore` / `.repomixignore` を尊重(本家 repomix と同じ挙動)
 - Designer 関連・`.resx` は既定で除外(オプションで含められる)
 - 除外した `*.Designer.vb` は **UI サマリー**として要約を自動埋め込み(下記)
