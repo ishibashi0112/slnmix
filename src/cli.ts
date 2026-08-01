@@ -21,13 +21,17 @@ import {
 	type RepomixSource,
 } from "./services/repomixExporter";
 import { parseSln } from "./slnParser";
+import { resolveTarget } from "./targetResolver";
 import type { ParseDiagnostic } from "./types";
 import { parseVbproj } from "./vbprojParser";
 
 const USAGE = `slnmix — .sln / .vbproj の論理構成に基づく repomix 互換エクスポート
 
 使い方:
-  slnmix <solution.sln | project.vbproj> [オプション]
+  slnmix [<solution.sln | project.vbproj | ディレクトリ>] [オプション]
+
+  入力を省略するとカレントディレクトリ(ディレクトリ指定ならその直下)の
+  *.sln を自動検出します(なければ *.vbproj。複数ある場合は候補を表示)。
 
 オプション:
   -o, --output <file>   出力先(既定: 入力と同じ場所の repomix-output.xml)
@@ -40,7 +44,8 @@ const USAGE = `slnmix — .sln / .vbproj の論理構成に基づく repomix 互
   -h, --help            このヘルプ
 
 例:
-  npx slnmix MyApp.sln
+  npx slnmix                        (カレントの .sln を自動検出)
+  npx slnmix C:\\path\\to\\Project    (指定フォルダ内を自動検出)
   npx slnmix MyApp.sln -o for-ai.xml --include-designer
   npx slnmix Sub\\Project.vbproj --stdout | pbcopy`;
 
@@ -153,20 +158,40 @@ function main(): number {
 		return 0;
 	}
 
-	const input = positionals[0];
-	if (input === undefined) {
-		console.error("入力の .sln または .vbproj を指定してください。\n");
-		console.error(USAGE);
+	const resolution = resolveTarget(positionals[0], process.cwd(), {
+		isDirectory: (absolutePath) => {
+			try {
+				return fs.statSync(absolutePath).isDirectory();
+			} catch {
+				return false;
+			}
+		},
+		isFile: (absolutePath) => {
+			try {
+				return fs.statSync(absolutePath).isFile();
+			} catch {
+				return false;
+			}
+		},
+		listFileNames: (absolutePath) => {
+			try {
+				return fs
+					.readdirSync(absolutePath, { withFileTypes: true })
+					.filter((entry) => entry.isFile())
+					.map((entry) => entry.name);
+			} catch {
+				return undefined;
+			}
+		},
+	});
+	if (resolution.kind === "error") {
+		console.error(resolution.message);
+		console.error("\n使い方は slnmix --help を参照してください。");
 		return 1;
 	}
-	const targetPath = path.resolve(input);
-	if (!fs.existsSync(targetPath)) {
-		console.error(`入力ファイルが見つかりません: ${targetPath}`);
-		return 1;
-	}
-	if (!/\.(sln|vbproj)$/i.test(targetPath)) {
-		console.error(`対応していない入力です(.sln / .vbproj のみ): ${targetPath}`);
-		return 1;
+	const targetPath = resolution.path;
+	if (resolution.autoDetected) {
+		console.error(`対象: ${targetPath}(自動検出)`);
 	}
 
 	const sources = collectSources(targetPath);

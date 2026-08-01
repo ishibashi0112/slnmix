@@ -56,10 +56,15 @@ Designer 自動生成コードからの要約(コントロール名: 型 — Tex
 ## 使い方
 
 ```console
-npx slnmix MyApp.sln
+npx slnmix                  # カレントディレクトリの .sln を自動検出
+npx slnmix C:\path\to\App   # 指定フォルダ内を自動検出
 npx slnmix MyApp.sln -o for-ai.xml
 npx slnmix Sub\Project.vbproj --stdout
 ```
+
+入力を省略すると、カレントディレクトリ(ディレクトリ指定ならその直下)の
+`*.sln` を自動検出します(なければ `*.vbproj`)。複数見つかった場合は
+候補を表示して終了するので、対象を明示してください。
 
 ```text
 オプション:
