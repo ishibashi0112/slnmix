@@ -39,6 +39,8 @@ const USAGE = `slnmix — .sln / .vbproj の論理構成に基づく repomix 互
       --include-designer  Designer 関連ファイル(*.Designer.vb 等)を原文のまま含める
       --no-ui-summary   Designer.vb からの UI サマリー(<ui_summary>)生成を無効化
       --no-mask         認証情報の自動マスク([MASKED] 置換)を無効化
+      --no-strict-mask  高エントロピー文字列(ランダム英数字列)の機械的マスクを
+                        無効化(既定は厳格モード。変数名等から判定するマスクは残る)
       --no-gitignore    .gitignore / .repomixignore による除外を無効化
   -v, --version         バージョン表示
   -h, --help            このヘルプ
@@ -153,6 +155,7 @@ function main(): number {
 			"include-designer": { type: "boolean", default: false },
 			"no-ui-summary": { type: "boolean", default: false },
 			"no-mask": { type: "boolean", default: false },
+			"no-strict-mask": { type: "boolean", default: false },
 			"no-gitignore": { type: "boolean", default: false },
 			version: { type: "boolean", short: "v", default: false },
 			help: { type: "boolean", short: "h", default: false },
@@ -235,6 +238,7 @@ function main(): number {
 		{
 			includeSensitive: values["include-designer"],
 			maskCredentials: !values["no-mask"],
+			strictMask: !values["no-strict-mask"],
 			uiSummary: !values["no-ui-summary"],
 		},
 	);

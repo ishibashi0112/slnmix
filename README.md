@@ -22,8 +22,11 @@ DependentUpon 解決済み)に基づいてエクスポートします。
 
 - 文字コードを自動判定(BOM / UTF-8 / Shift_JIS(CP932))して UTF-8 に統一
 - 認証情報らしき値(`Password=` / APIキー等)を既定で `[MASKED]` に自動置換
-  (`パスワード` / `ﾊﾟｽﾜｰﾄﾞ` 等の日本語変数名・キー名、UI サマリー生成前の
-  Designer ソースにも適用)
+  (`パスワード` / `ﾊﾟｽﾜｰﾄﾞ` 等の日本語変数名・キー名、メソッド引数
+  `Login("...", "...")`、UI サマリー生成前の Designer ソースにも適用)
+- 既定で厳格モード: ランダムな英数字列(高エントロピー値)も機械的にマスク
+  (`--no-strict-mask` で無効化)。出力ヘッダーには AI 向けに
+  「[MASKED] は伏せ字」であることと取り扱いの指示を明記
 - `.gitignore` / `.repomixignore` を尊重(本家 repomix と同じ挙動)
 - Designer 関連・`.resx` は既定で除外(オプションで含められる)
 - 除外した `*.Designer.vb` は **UI サマリー**として要約を自動埋め込み(下記)
@@ -77,6 +80,7 @@ npx slnmix Sub\Project.vbproj --stdout
       --include-designer  Designer 関連ファイル(*.Designer.vb 等)を原文のまま含める
       --no-ui-summary     Designer.vb からの UI サマリー生成を無効化
       --no-mask           認証情報の自動マスクを無効化
+      --no-strict-mask    高エントロピー文字列の機械的マスクを無効化
       --no-gitignore      .gitignore / .repomixignore による除外を無効化
   -v, --version           バージョン表示
   -h, --help              ヘルプ
