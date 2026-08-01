@@ -3,6 +3,15 @@
 	"version": "0.2.0",
 	"description": "Repomix 互換フォーマットで .sln / .vbproj を 1 ファイルにエクスポートする CLI。ディレクトリ走査ではなくソリューションの論理構成(Link・DependentUpon 解決済み)に基づく。レガシー VB.NET / Shift_JIS 対応。",
 	"license": "MIT",
+	"author": "ishibashi0112",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/ishibashi0112/slnmix.git"
+	},
+	"homepage": "https://github.com/ishibashi0112/slnmix#readme",
+	"bugs": {
+		"url": "https://github.com/ishibashi0112/slnmix/issues"
+	},
 	"bin": {
 		"slnmix": "dist/cli.js"
 	},
