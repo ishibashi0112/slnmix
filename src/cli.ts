@@ -51,10 +51,21 @@ const USAGE = `slnmix — .sln / .vbproj の論理構成に基づく repomix 互
 
 interface FsDeps {
 	fileExists(absolutePath: string): boolean;
+	listFileNames(absolutePath: string): string[] | undefined;
 }
 
 const FS_DEPS: FsDeps = {
 	fileExists: (absolutePath) => fs.existsSync(absolutePath),
+	listFileNames: (absolutePath) => {
+		try {
+			return fs
+				.readdirSync(absolutePath, { withFileTypes: true })
+				.filter((entry) => entry.isFile())
+				.map((entry) => entry.name);
+		} catch {
+			return undefined;
+		}
+	},
 };
 
 /** ソース/プロジェクトファイルを文字コード自動判定(BOM / UTF-8 / CP932)で読む */
@@ -173,16 +184,7 @@ function main(): number {
 				return false;
 			}
 		},
-		listFileNames: (absolutePath) => {
-			try {
-				return fs
-					.readdirSync(absolutePath, { withFileTypes: true })
-					.filter((entry) => entry.isFile())
-					.map((entry) => entry.name);
-			} catch {
-				return undefined;
-			}
-		},
+		listFileNames: FS_DEPS.listFileNames,
 	});
 	if (resolution.kind === "error") {
 		console.error(resolution.message);
