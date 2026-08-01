@@ -32,7 +32,8 @@ const USAGE = `slnmix — .sln / .vbproj の論理構成に基づく repomix 互
 オプション:
   -o, --output <file>   出力先(既定: 入力と同じ場所の repomix-output.xml)
       --stdout          ファイルではなく標準出力へ書く(BOM なし)
-      --include-designer  Designer 関連ファイル(*.Designer.vb 等)も含める
+      --include-designer  Designer 関連ファイル(*.Designer.vb 等)を原文のまま含める
+      --no-ui-summary   Designer.vb からの UI サマリー(<ui_summary>)生成を無効化
       --no-mask         認証情報の自動マスク([MASKED] 置換)を無効化
       --no-gitignore    .gitignore / .repomixignore による除外を無効化
   -v, --version         バージョン表示
@@ -134,6 +135,7 @@ function main(): number {
 			output: { type: "string", short: "o" },
 			stdout: { type: "boolean", default: false },
 			"include-designer": { type: "boolean", default: false },
+			"no-ui-summary": { type: "boolean", default: false },
 			"no-mask": { type: "boolean", default: false },
 			"no-gitignore": { type: "boolean", default: false },
 			version: { type: "boolean", short: "v", default: false },
@@ -206,6 +208,7 @@ function main(): number {
 		{
 			includeSensitive: values["include-designer"],
 			maskCredentials: !values["no-mask"],
+			uiSummary: !values["no-ui-summary"],
 		},
 	);
 
@@ -223,11 +226,13 @@ function main(): number {
 	const maskNote = values["no-mask"]
 		? "(マスク無効)"
 		: ` / 認証情報マスク ${output.maskedCount} 件`;
+	const uiSummaryNote =
+		output.uiSummaryCount > 0 ? ` / UI サマリー ${output.uiSummaryCount} 件` : "";
 	console.error(
 		`${output.fileCount} ファイル / 約 ${Math.max(
 			1,
 			Math.round(output.totalChars / 1000),
-		)}K 文字(スキップ ${output.skipped.length} 件${maskNote})`,
+		)}K 文字(スキップ ${output.skipped.length} 件${maskNote}${uiSummaryNote})`,
 	);
 	return 0;
 }
