@@ -14,6 +14,10 @@
 import * as fs from "fs";
 import * as path from "path";
 import { parseArgs } from "util";
+import {
+	appendInstruction,
+	resolveInstructionFile,
+} from "./instructionFile";
 import { GitignoreEvaluator } from "./services/gitignoreService";
 import {
 	buildRepomixOutput,
@@ -42,6 +46,10 @@ const USAGE = `slnmix — .sln / .vbproj の論理構成に基づく repomix 互
       --no-strict-mask  高エントロピー文字列(ランダム英数字列)の機械的マスクを
                         無効化(既定は厳格モード。変数名等から判定するマスクは残る)
       --no-gitignore    .gitignore / .repomixignore による除外を無効化
+      --instruction-file <path>
+                        出力末尾に <instruction> として連結する規約文ファイルを
+                        明示指定(既定: 入力と同じ場所の protocol.md を自動検出。
+                        petari init が生成する規約文を想定)
   -v, --version         バージョン表示
   -h, --help            このヘルプ
 
@@ -157,6 +165,7 @@ function main(): number {
 			"no-mask": { type: "boolean", default: false },
 			"no-strict-mask": { type: "boolean", default: false },
 			"no-gitignore": { type: "boolean", default: false },
+			"instruction-file": { type: "string" },
 			version: { type: "boolean", short: "v", default: false },
 			help: { type: "boolean", short: "h", default: false },
 		},
@@ -205,6 +214,18 @@ function main(): number {
 		return 1;
 	}
 
+	// petari 等の規約文(protocol.md)を出力末尾へ連結する(なければ従来どおり)
+	const instruction = resolveInstructionFile(
+		values["instruction-file"],
+		targetPath,
+		process.cwd(),
+		{ readTextFile: readSourceTextFile },
+	);
+	if (instruction.kind === "error") {
+		console.error(instruction.message);
+		return 1;
+	}
+
 	// .gitignore / .repomixignore の尊重(本家 repomix と同じ既定挙動)
 	const gitignore = new GitignoreEvaluator(
 		{
@@ -243,14 +264,23 @@ function main(): number {
 		},
 	);
 
+	let content = output.content;
+	if (instruction.kind === "found") {
+		content = appendInstruction(content, instruction.content);
+	} else {
+		console.error(
+			`protocol.md が見つかりません(規約文なしで出力): ${instruction.searchedPath}`,
+		);
+	}
+
 	if (values.stdout) {
-		process.stdout.write(output.content);
+		process.stdout.write(content);
 	} else {
 		const outputPath = path.resolve(
 			values.output ?? path.join(path.dirname(targetPath), "repomix-output.xml"),
 		);
 		// BOM 付き UTF-8 で保存(Windows 系ツールのエンコーディング誤判定を防ぐ)
-		fs.writeFileSync(outputPath, "\uFEFF" + output.content, "utf8");
+		fs.writeFileSync(outputPath, "\uFEFF" + content, "utf8");
 		console.error(`出力: ${outputPath}`);
 	}
 

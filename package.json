@@ -1,6 +1,6 @@
 {
 	"name": "slnmix",
-	"version": "0.6.0",
+	"version": "0.7.0",
 	"description": "Repomix 互換フォーマットで .sln / .vbproj を 1 ファイルにエクスポートする CLI。ディレクトリ走査ではなくソリューションの論理構成(Link・DependentUpon 解決済み)に基づく。レガシー VB.NET / Shift_JIS 対応。",
 	"license": "MIT",
 	"author": "Yuki Sakakibara",

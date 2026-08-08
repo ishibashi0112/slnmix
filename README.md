@@ -33,6 +33,8 @@ DependentUpon 解決済み)に基づいてエクスポートします。
 - 除外・未解決のファイルは `<skipped_files>` に明記(黙って捨てない)
 - `.sln` と同じフォルダに `.sln` から参照されていない `.vbproj` があれば警告
   (`.sln` だけが古い場合のエクスポート漏れに気付ける)
+- 入力と同じフォルダの `protocol.md`([petari](https://github.com/ishibashi0112/petari)
+  の規約文)があれば出力末尾に `<instruction>` として自動連結(下記)
 - 出力は BOM 付き UTF-8(Windows 系ツールの誤判定防止)
 
 ## UI サマリー
@@ -82,6 +84,9 @@ npx slnmix Sub\Project.vbproj --stdout
       --no-mask           認証情報の自動マスクを無効化
       --no-strict-mask    高エントロピー文字列の機械的マスクを無効化
       --no-gitignore      .gitignore / .repomixignore による除外を無効化
+      --instruction-file <path>
+                          出力末尾に連結する規約文ファイルを明示指定
+                          (既定: 入力と同じ場所の protocol.md を自動検出)
   -v, --version           バージョン表示
   -h, --help              ヘルプ
 ```
@@ -95,6 +100,28 @@ MSBuild の完全評価は行いません(静的 XML 解析のみ)。
 - `Import` された `.targets` / `.props` は展開しない
 
 推測で補完せず、解決できないものは解決できないと明記する方針です。
+
+## petari 連携(規約文の自動付与)
+
+AI チャットの返答をローカルへ適用する CLI
+[petari](https://github.com/ishibashi0112/petari) と組み合わせる場合、
+AI に changes.md 規約を守らせるための規約文を出力末尾に含められます。
+
+入力(`.sln` / `.vbproj`)と同じフォルダに `protocol.md` があれば、
+その内容を**一字一句そのまま** `<instruction>` ブロックとして出力末尾に
+連結します(本家 repomix の `instructionFilePath` 相当)。`protocol.md` は
+プロジェクト直下で `petari init` を実行すると生成されます。
+
+```console
+npx petari init   # protocol.md を生成(規約文の正本は petari が持つ)
+npx slnmix        # 出力末尾に protocol.md が <instruction> として付く
+```
+
+規約文は slnmix に同梱していないため、petari 側で規約が更新されても
+`petari init` で `protocol.md` を作り直すだけで追従できます。
+`protocol.md` がない場合は従来どおりの出力になります(その旨を 1 行表示)。
+別の場所・別名のファイルを使う場合は `--instruction-file <path>` で
+明示指定してください。
 
 ## 関連プロジェクト
 

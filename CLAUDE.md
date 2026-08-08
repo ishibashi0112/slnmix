@@ -26,8 +26,13 @@ Shift_JIS 環境。
      拡張側は「設定 exportIncludeDesignerFiles」)
 - CLI が定着したら共通コアのパッケージ化を検討する(現状は意図的にコピー運用)
 
-`src/cli.ts` だけがこのリポジトリ固有(引数処理とファイル I/O のみ。
-Node 標準の `util.parseArgs` を使用し、依存追加はしない)。
+このリポジトリ固有(共有コア外・拡張側への同期不要)なのは以下のみ:
+
+- `src/cli.ts` — 引数処理とファイル I/O(Node 標準の `util.parseArgs` を使用し、
+  依存追加はしない)
+- `src/targetResolver.ts` — 入力(.sln / .vbproj)の自動検出
+- `src/instructionFile.ts` — petari 規約文(protocol.md)の出力末尾への連結
+- 上記に対応するテスト
 
 ## コーディング方針
 
