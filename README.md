@@ -61,6 +61,13 @@ Designer 自動生成コードからの要約(コントロール名: 型 — Tex
 
 原文が必要な場合は `--include-designer`(サマリーの代わりに原文を出力)、
 サマリー自体が不要なら `--no-ui-summary` を指定します。
+特定のフォームだけ原文が必要な場合は `--include-designer-file <名前|パターン>`
+(複数指定可)で選べます。指定しなかった Designer は従来どおり除外・要約
+されるため、関係ないフォームで出力が膨らむのを避けられます。
+
+```console
+npx slnmix MyApp.sln --include-designer-file FormMain.Designer.vb --include-designer-file "FormOrder*"
+```
 
 ## 使い方
 
@@ -80,6 +87,10 @@ npx slnmix Sub\Project.vbproj --stdout
   -o, --output <file>     出力先(既定: 入力と同じ場所の repomix-output.xml)
       --stdout            ファイルではなく標準出力へ書く(BOM なし)
       --include-designer  Designer 関連ファイル(*.Designer.vb 等)を原文のまま含める
+      --include-designer-file <名前|パターン>
+                          指定した Designer 関連ファイルだけ原文のまま含める
+                          (複数指定可。* をワイルドカードに使える。ファイル名
+                          または論理パスに全体一致)
       --no-ui-summary     Designer.vb からの UI サマリー生成を無効化
       --no-mask           認証情報の自動マスクを無効化
       --no-strict-mask    高エントロピー文字列の機械的マスクを無効化

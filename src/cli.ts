@@ -14,6 +14,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import { parseArgs } from "util";
+import { buildDesignerFileMatcher } from "./designerFileFilter";
 import {
 	appendInstruction,
 	prependInstructionNotice,
@@ -42,6 +43,11 @@ const USAGE = `slnmix — .sln / .vbproj の論理構成に基づく repomix 互
   -o, --output <file>   出力先(既定: 入力と同じ場所の repomix-output.xml)
       --stdout          ファイルではなく標準出力へ書く(BOM なし)
       --include-designer  Designer 関連ファイル(*.Designer.vb 等)を原文のまま含める
+      --include-designer-file <名前|パターン>
+                        指定した Designer 関連ファイルだけ原文のまま含める
+                        (複数指定可。* をワイルドカードに使える。ファイル名
+                        または論理パスに全体一致。例: FormMain.Designer.vb、
+                        "Form*"。それ以外の Designer は従来どおり除外・要約)
       --no-ui-summary   Designer.vb からの UI サマリー(<ui_summary>)生成を無効化
       --no-mask         認証情報の自動マスク([MASKED] 置換)を無効化
       --no-strict-mask  高エントロピー文字列(ランダム英数字列)の機械的マスクを
@@ -162,6 +168,7 @@ function main(): number {
 			output: { type: "string", short: "o" },
 			stdout: { type: "boolean", default: false },
 			"include-designer": { type: "boolean", default: false },
+			"include-designer-file": { type: "string", multiple: true },
 			"no-ui-summary": { type: "boolean", default: false },
 			"no-mask": { type: "boolean", default: false },
 			"no-strict-mask": { type: "boolean", default: false },
@@ -215,6 +222,32 @@ function main(): number {
 		return 1;
 	}
 
+	// Designer の含め方: --include-designer-file(選択)> --include-designer(全件)
+	const designerFilePatterns = values["include-designer-file"] ?? [];
+	let includeSensitive: boolean | ((logicalPath: string) => boolean) =
+		values["include-designer"];
+	if (designerFilePatterns.length > 0) {
+		if (values["include-designer"]) {
+			console.error(
+				"[warning] --include-designer-file の指定があるため --include-designer(全件)は無視します",
+			);
+		}
+		includeSensitive = buildDesignerFileMatcher(designerFilePatterns);
+		// パターンの打ち間違いに気づけるよう、どの Designer にも一致しなければ警告する
+		const sensitivePaths = sources.flatMap((source) =>
+			source.parseResult.items
+				.filter((item) => item.isSensitive)
+				.map((item) => item.logicalPath),
+		);
+		for (const pattern of designerFilePatterns) {
+			if (!sensitivePaths.some(buildDesignerFileMatcher([pattern]))) {
+				console.error(
+					`[warning] --include-designer-file に一致する Designer 関連ファイルがありません: ${pattern}`,
+				);
+			}
+		}
+	}
+
 	// petari 等の規約文(protocol.md)を出力末尾へ連結する(なければ従来どおり)
 	const instruction = resolveInstructionFile(
 		values["instruction-file"],
@@ -258,7 +291,7 @@ function main(): number {
 				: (absolutePath) => gitignore.ignoreReasonFor(absolutePath),
 		},
 		{
-			includeSensitive: values["include-designer"],
+			includeSensitive,
 			maskCredentials: !values["no-mask"],
 			strictMask: !values["no-strict-mask"],
 			uiSummary: !values["no-ui-summary"],
