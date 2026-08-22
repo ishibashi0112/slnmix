@@ -16,6 +16,7 @@ import * as path from "path";
 import { parseArgs } from "util";
 import {
 	appendInstruction,
+	prependInstructionNotice,
 	resolveInstructionFile,
 } from "./instructionFile";
 import { GitignoreEvaluator } from "./services/gitignoreService";
@@ -264,9 +265,14 @@ function main(): number {
 		},
 	);
 
+	// 規約文があれば先頭リマインダ + 末尾全文のサンドイッチ配置にする
+	// (チャットの要約処理で末尾が落ちても冒頭のポインタが規約へ誘導する)
 	let content = output.content;
 	if (instruction.kind === "found") {
-		content = appendInstruction(content, instruction.content);
+		content = prependInstructionNotice(
+			appendInstruction(content, instruction.content),
+			instruction,
+		);
 	} else {
 		console.error(
 			`protocol.md が見つかりません(規約文なしで出力): ${instruction.searchedPath}`,

@@ -111,6 +111,8 @@ AI に changes.md 規約を守らせるための規約文を出力末尾に含�
 その内容を**一字一句そのまま** `<instruction>` ブロックとして出力末尾に
 連結します(本家 repomix の `instructionFilePath` 相当)。`protocol.md` は
 プロジェクト直下で `petari init` を実行すると生成されます。
+規約文を付けたときは、出力の先頭にも末尾の規約へ誘導する短いリマインダを
+置きます(チャットの要約処理で末尾が読まれない場合への対策)。
 
 ```console
 npx petari init   # protocol.md を生成(規約文の正本は petari が持つ)

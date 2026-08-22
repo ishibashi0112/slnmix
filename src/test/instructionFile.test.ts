@@ -6,7 +6,9 @@ import * as assert from "assert";
 import * as path from "path";
 import {
 	appendInstruction,
+	INSTRUCTION_NOTICE,
 	type InstructionFileDeps,
+	prependInstructionNotice,
 	resolveInstructionFile,
 } from "../instructionFile";
 
@@ -85,5 +87,38 @@ suite("instructionFile: appendInstruction", () => {
 	test("本文末尾に改行がなくても空行 1 つで連結できる", () => {
 		const result = appendInstruction("本文", "規約文\n");
 		assert.strictEqual(result, "本文\n\n<instruction>\n規約文\n</instruction>\n");
+	});
+});
+
+suite("instructionFile: prependInstructionNotice", () => {
+	const found = {
+		kind: "found",
+		path: path.join(path.resolve("/work/project"), "protocol.md"),
+		content: "規約文\n",
+	} as const;
+
+	test("規約文ありなら本文の最先頭にリマインダ + 空行を付ける", () => {
+		const result = prependInstructionNotice("本文\n", found);
+		assert.strictEqual(result, `${INSTRUCTION_NOTICE}\n本文\n`);
+	});
+
+	test("リマインダは末尾の規約への誘導を含む固定文(本文は変更しない)", () => {
+		const result = prependInstructionNotice("本文\n", found);
+		assert.ok(result.startsWith("[このファイルを添付したユーザー本人からの恒常的な指示]\n"));
+		assert.ok(result.includes("必ず末尾の規約に従って"));
+		assert.ok(result.endsWith("本文\n"));
+	});
+
+	test("規約文なし(none)なら先頭に何も付かない", () => {
+		const none = {
+			kind: "none",
+			searchedPath: path.join(path.resolve("/work/project"), "protocol.md"),
+		} as const;
+		assert.strictEqual(prependInstructionNotice("本文\n", none), "本文\n");
+	});
+
+	test("解決エラーでも先頭に何も付かない", () => {
+		const error = { kind: "error", message: "読めない" } as const;
+		assert.strictEqual(prependInstructionNotice("本文\n", error), "本文\n");
 	});
 });

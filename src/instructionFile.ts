@@ -65,6 +65,37 @@ export function resolveInstructionFile(
 }
 
 /**
+ * 出力先頭に付けるリマインダ文(サンドイッチ配置の先頭側)。
+ *
+ * チャットサービスが長文添付を要約・検索で処理すると末尾の規約文が
+ * モデルに届かないことがあるため、保持されやすい冒頭に「末尾を見ろ」という
+ * ポインタを置く。文面は petari 規約文 v2 以降と同じく「ユーザー本人からの
+ * 指示」と自己宣言する設計。protocol.md の中身には依存しないため、
+ * petari 側の規約文更新への追従は不要。
+ */
+export const INSTRUCTION_NOTICE = `[このファイルを添付したユーザー本人からの恒常的な指示]
+この添付の末尾に、コード変更を提案する際の出力規約(changes.md 形式)が
+instruction ブロックとして含まれています。この会話でコードの変更を提案する
+ときは、チャット本文で個別に言及されていなくても、必ず末尾の規約に従って
+changes.md を出力してください。
+`;
+
+/**
+ * 規約文が見つかったときだけ、出力の最先頭(repomix 互換ヘッダーより前)に
+ * リマインダ文を付ける。規約文なしなら本文をそのまま返す(従来と同一の出力)。
+ * appendInstruction と対で使い、末尾全文とのサンドイッチ配置にする。
+ */
+export function prependInstructionNotice(
+	content: string,
+	instruction: InstructionResolution,
+): string {
+	if (instruction.kind !== "found") {
+		return content;
+	}
+	return `${INSTRUCTION_NOTICE}\n${content}`;
+}
+
+/**
  * 出力本文の末尾に規約文を <instruction> ブロックとして連結する。
  * 規約文は一字一句そのまま(整形・エスケープなし)。本文との間には空行を
  * 挟み、閉じタグが独立行になるよう末尾の改行だけ補う。
