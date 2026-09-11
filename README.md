@@ -35,6 +35,8 @@ DependentUpon 解決済み)に基づいてエクスポートします。
   (`.sln` だけが古い場合のエクスポート漏れに気付ける)
 - 入力と同じフォルダの `protocol.md`([petari](https://github.com/ishibashi0112/petari)
   の規約文)があれば出力末尾に `<instruction>` として自動連結(下記)
+- 「調査 → 方針 → 変更 → 自己検証」の**作業手順**を出力末尾に `<procedure>` として
+  同梱し、`--task` で依頼内容も一緒に渡せる(下記)
 - 出力は BOM 付き UTF-8(Windows 系ツールの誤判定防止)
 
 ## UI サマリー
@@ -98,6 +100,16 @@ npx slnmix Sub\Project.vbproj --stdout
       --instruction-file <path>
                           出力末尾に連結する規約文ファイルを明示指定
                           (既定: 入力と同じ場所の protocol.md を自動検出)
+      --task <file|text>  依頼内容を出力末尾に <task> として同梱
+                          (ファイルが存在すれば読み込み、なければ文字列)
+      --mode <full|plan|implement>
+                          作業手順のモード(既定: full)
+      --plan <file>       implement モードで承認済みの方針を <plan> として同梱
+      --procedure-file <path>
+                          作業手順文を明示指定(既定: 入力と同じ場所の
+                          procedure.md を自動検出。なければ内蔵既定文)
+      --no-procedure      <procedure> を出さない(従来出力)
+      --print-procedure   内蔵の作業手順文を標準出力に書いて終了
   -v, --version           バージョン表示
   -h, --help              ヘルプ
 ```
@@ -136,11 +148,64 @@ npx slnmix        # 出力末尾に protocol.md が <instruction> として付�
 別の場所・別名のファイルを使う場合は `--instruction-file <path>` で
 明示指定してください。
 
+## 作業手順の自動付与(`<procedure>` / `--task` / `--mode`)
+
+M365 Copilot のように思考量を外から制御できないチャットでは、
+**回答の中で考えさせる**方が確実です。slnmix は既定で、出力末尾に
+「調査 → 方針 → 変更 → 自己検証」の手順を `<procedure>` ブロックとして同梱し、
+曖昧なら推測せず質問して止まるよう指示します。先頭にはタスクの 1 行要約と
+末尾ブロックへの誘導(リマインダ)を置きます。
+
+`protocol.md`(`<instruction>`)が「changes.md の**書き方**」の規約なのに対し、
+`<procedure>` は「変更を考える**手順**」です。責務が違うので別ブロックにしています。
+`protocol.md` の有無に関わらず `<procedure>` は付きます(`--no-procedure` で
+従来どおりの出力に戻ります)。
+
+```console
+npx slnmix --task "受注フォームに保存ボタンを追加する"   # 依頼内容を <task> に同梱
+npx slnmix --task task.md                                # ファイルなら読み込む
+```
+
+### モード(`--mode`)
+
+| モード | 用途 | AI に要求する回答の構成 |
+|---|---|---|
+| `full`(既定) | 小〜中規模の変更を 1 ターンで | 調査 / 方針 / 変更(changes.md)/ 自己検証 |
+| `plan` | 方針を先に固める | 調査 / 方針 / 質問(changes.md は出させない) |
+| `implement` | 承認済みの方針で実装 | 方針の確認 / 変更(changes.md)/ 自己検証 |
+
+大きめの変更は `plan` → `implement` の 2 ターンに分けると、回答の出力上限で
+changes.md が途中で切れるのを避けられます。`plan` の回答を手直しして
+ファイルに保存し、`implement` で `--plan` に渡してください(`implement` では
+`--plan` が必須です)。
+
+```console
+npx slnmix --task task.md --mode plan                    # → 方針と質問だけが返る
+npx slnmix --task task.md --mode implement --plan plan.md   # 承認した方針を <plan> として同梱
+```
+
+### 手順文のカスタマイズ(`procedure.md`)
+
+入力と同じフォルダに `procedure.md` があれば、内蔵既定文の代わりにその内容を
+一字一句そのまま使います(`{{MODE}}` / `{{MODE_SECTIONS}}` があればモードに
+応じて置換)。生成コマンドはありません。内蔵既定文を書き出して編集してください。
+
+```console
+npx slnmix --print-procedure > procedure.md              # 内蔵既定文を書き出す
+npx slnmix --print-procedure --mode plan                 # モード別の文面を確認
+```
+
+プロジェクト固有のルール(コーディング規約・禁止事項など)は
+`procedure.md` の末尾に追記する運用を想定しています。別ファイルは増やしません。
+
 ## 関連プロジェクト
 
-VS Code 上で同じ論理ツリーを表示・ビルド・エクスポートできる拡張
-[Legacy VB.NET Workbench](https://github.com/ishibashi0112/legacy_vb_workbench)
-と同一の解析コアを使っています。
+- [petari](https://github.com/ishibashi0112/petari) — AI チャットの返答
+  (changes.md)をローカルへ適用する CLI。`protocol.md` の正本を持つ
+- [Legacy VB.NET Workbench](https://github.com/ishibashi0112/legacy_vb_workbench)
+  — VS Code 上で同じ論理ツリーを表示・ビルド・エクスポートする拡張。
+  解析コアは元々共通でしたが、現在は slnmix 側が唯一の置き場で、拡張は
+  2026-09 時点で凍結しています
 
 ## License
 

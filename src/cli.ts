@@ -7,19 +7,28 @@
  * 解決済み)に基づくため、プロジェクト外・別ドライブの Link ファイルも拾い、
  * ビルド対象外のファイルは含めない。
  *
- * 解析・出力ロジックは Legacy VB.NET Workbench(VS Code 拡張)と同一の
- * コアモジュールを使う。この入口はファイル I/O と引数処理のみを担当する。
+ * 解析・出力ロジックは src/ 直下と services/ のコアモジュールが担い、この入口は
+ * ファイル I/O と引数処理のみを担当する。
  */
 
 import * as fs from "fs";
 import * as path from "path";
 import { parseArgs } from "util";
-import { buildDesignerFileMatcher } from "./designerFileFilter";
 import {
-	appendInstruction,
-	prependInstructionNotice,
-	resolveInstructionFile,
-} from "./instructionFile";
+	DEFAULT_PROCEDURE_MODE,
+	isProcedureMode,
+	PROCEDURE_MODES,
+	PROCEDURE_VERSION,
+	renderBuiltinProcedure,
+} from "./assets/procedure";
+import { buildDesignerFileMatcher } from "./designerFileFilter";
+import { resolveInstructionFile } from "./instructionFile";
+import {
+	assembleOutput,
+	resolvePlan,
+	resolveProcedure,
+	resolveTask,
+} from "./procedureFile";
 import { GitignoreEvaluator } from "./services/gitignoreService";
 import {
 	buildRepomixOutput,
@@ -57,6 +66,20 @@ const USAGE = `slnmix — .sln / .vbproj の論理構成に基づく repomix 互
                         出力末尾に <instruction> として連結する規約文ファイルを
                         明示指定(既定: 入力と同じ場所の protocol.md を自動検出。
                         petari init が生成する規約文を想定)
+      --task <file|text>  依頼内容を出力末尾に <task> として同梱する。ファイルが
+                        存在すれば読み込み、なければ文字列として扱う
+      --mode <full|plan|implement>
+                        作業手順(<procedure>)のモード(既定: full)
+                          full      調査 / 方針 / 変更(changes.md)/ 自己検証
+                          plan      調査 / 方針 / 質問(changes.md は出させない)
+                          implement 方針の確認 / 変更 / 自己検証(--plan が必須)
+      --plan <file>     implement モードで承認済みの方針を <plan> として同梱する
+      --procedure-file <path>
+                        作業手順文を明示指定(既定: 入力と同じ場所の procedure.md を
+                        自動検出。なければ内蔵既定文)
+      --no-procedure    <procedure> を出さない(従来出力)
+      --print-procedure 内蔵の作業手順文を標準出力に書いて終了(--mode 併用可。
+                        カスタマイズする人は procedure.md へリダイレクトして編集)
   -v, --version         バージョン表示
   -h, --help            このヘルプ
 
@@ -64,7 +87,10 @@ const USAGE = `slnmix — .sln / .vbproj の論理構成に基づく repomix 互
   npx slnmix                        (カレントの .sln を自動検出)
   npx slnmix C:\\path\\to\\Project    (指定フォルダ内を自動検出)
   npx slnmix MyApp.sln -o for-ai.xml --include-designer
-  npx slnmix Sub\\Project.vbproj --stdout | pbcopy`;
+  npx slnmix Sub\\Project.vbproj --stdout | pbcopy
+  npx slnmix --task task.md --mode plan            (方針だけ先に出させる)
+  npx slnmix --task task.md --mode implement --plan plan.md
+  npx slnmix --print-procedure > procedure.md      (手順文をカスタマイズ)`;
 
 interface FsDeps {
 	fileExists(absolutePath: string): boolean;
@@ -174,6 +200,12 @@ function main(): number {
 			"no-strict-mask": { type: "boolean", default: false },
 			"no-gitignore": { type: "boolean", default: false },
 			"instruction-file": { type: "string" },
+			task: { type: "string" },
+			mode: { type: "string", default: DEFAULT_PROCEDURE_MODE },
+			plan: { type: "string" },
+			"procedure-file": { type: "string" },
+			"no-procedure": { type: "boolean", default: false },
+			"print-procedure": { type: "boolean", default: false },
 			version: { type: "boolean", short: "v", default: false },
 			help: { type: "boolean", short: "h", default: false },
 		},
@@ -187,6 +219,28 @@ function main(): number {
 	if (values.version) {
 		console.log(readPackageVersion());
 		return 0;
+	}
+
+	const mode = values.mode;
+	if (!isProcedureMode(mode)) {
+		console.error(
+			`--mode は ${PROCEDURE_MODES.join(" / ")} のいずれかを指定してください: ${mode}`,
+		);
+		return 1;
+	}
+	if (values["print-procedure"]) {
+		process.stdout.write(renderBuiltinProcedure(mode));
+		return 0;
+	}
+	if (mode === "implement" && values.plan === undefined) {
+		console.error(
+			"--mode implement には --plan <file>(承認済みの方針)が必要です。先に --mode plan で方針を出し、確認したものを渡してください。",
+		);
+		return 1;
+	}
+	if (mode !== "implement" && values.plan !== undefined) {
+		console.error("--plan は --mode implement でのみ使えます。");
+		return 1;
 	}
 
 	const resolution = resolveTarget(positionals[0], process.cwd(), {
@@ -260,6 +314,29 @@ function main(): number {
 		return 1;
 	}
 
+	// 作業手順(<procedure>)・依頼内容(<task>)・承認済み方針(<plan>)
+	const textDeps = { readTextFile: readSourceTextFile };
+	const task = resolveTask(values.task, process.cwd(), textDeps);
+	const plan = resolvePlan(values.plan, process.cwd(), textDeps);
+	if (plan.kind === "error") {
+		console.error(plan.message);
+		return 1;
+	}
+	const procedure = resolveProcedure(
+		{
+			explicitPath: values["procedure-file"],
+			disabled: values["no-procedure"],
+			mode,
+		},
+		targetPath,
+		process.cwd(),
+		textDeps,
+	);
+	if (procedure.kind === "error") {
+		console.error(procedure.message);
+		return 1;
+	}
+
 	// .gitignore / .repomixignore の尊重(本家 repomix と同じ既定挙動)
 	const gitignore = new GitignoreEvaluator(
 		{
@@ -298,18 +375,33 @@ function main(): number {
 		},
 	);
 
-	// 規約文があれば先頭リマインダ + 末尾全文のサンドイッチ配置にする
-	// (チャットの要約処理で末尾が落ちても冒頭のポインタが規約へ誘導する)
-	let content = output.content;
-	if (instruction.kind === "found") {
-		content = prependInstructionNotice(
-			appendInstruction(content, instruction.content),
-			instruction,
-		);
-	} else {
+	// 末尾に <task> / <plan> / <procedure> / <instruction>、先頭にリマインダの
+	// サンドイッチ配置(チャットの要約処理で末尾が落ちても冒頭が末尾へ誘導する)
+	const content = assembleOutput(output.content, {
+		task,
+		plan,
+		procedure,
+		instruction,
+	});
+	if (instruction.kind === "none") {
 		console.error(
 			`protocol.md が見つかりません(規約文なしで出力): ${instruction.searchedPath}`,
 		);
+	}
+	if (task.kind === "file") {
+		console.error(`タスク: ${task.path}`);
+	} else if (task.kind === "text") {
+		console.error(`タスク: 引数の文字列(${task.content.length} 文字)`);
+	}
+	if (plan.kind === "found") {
+		console.error(`方針: ${plan.path}`);
+	}
+	if (procedure.kind === "builtin") {
+		console.error(
+			`手順文: 内蔵既定文 v${PROCEDURE_VERSION}(モード: ${procedure.mode})`,
+		);
+	} else if (procedure.kind === "file") {
+		console.error(`手順文: ${procedure.path}(モード: ${procedure.mode})`);
 	}
 
 	if (values.stdout) {

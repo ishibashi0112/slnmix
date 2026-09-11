@@ -96,17 +96,25 @@ export function prependInstructionNotice(
 }
 
 /**
- * 出力本文の末尾に規約文を <instruction> ブロックとして連結する。
- * 規約文は一字一句そのまま(整形・エスケープなし)。本文との間には空行を
+ * 出力本文の末尾にテキストを <tag> ブロックとして連結する。
+ * テキストは一字一句そのまま(整形・エスケープなし)。本文との間には空行を
  * 挟み、閉じタグが独立行になるよう末尾の改行だけ補う。
+ * <task> / <plan> / <procedure>(procedureFile.ts)も同じ形で連結する。
  */
+export function appendBlock(
+	content: string,
+	tag: string,
+	text: string,
+): string {
+	const body = text.endsWith("\n") ? text : `${text}\n`;
+	const separator = content.endsWith("\n") ? "\n" : "\n\n";
+	return `${content}${separator}<${tag}>\n${body}</${tag}>\n`;
+}
+
+/** 出力本文の末尾に規約文を <instruction> ブロックとして連結する */
 export function appendInstruction(
 	content: string,
 	instructionText: string,
 ): string {
-	const body = instructionText.endsWith("\n")
-		? instructionText
-		: `${instructionText}\n`;
-	const separator = content.endsWith("\n") ? "\n" : "\n\n";
-	return `${content}${separator}<instruction>\n${body}</instruction>\n`;
+	return appendBlock(content, "instruction", instructionText);
 }

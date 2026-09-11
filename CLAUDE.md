@@ -7,32 +7,34 @@ slnmix — レガシー Visual Studio(.sln / .vbproj)の**論理構成**に基�
 npm に公開済み(`npx slnmix`)。対象はレガシー VB.NET / .NET Framework /
 Shift_JIS 環境。
 
-## 最重要の前提: コアは Legacy VB.NET Workbench と二重管理
+## 解析コアの置き場
 
-`src/` の解析コアは VS Code 拡張
+`src/` の解析コア(`types.ts` / `paths.ts` / `slnParser.ts` / `vbprojParser.ts` /
+`logicalTreeBuilder.ts` / `services/*`)は **slnmix が唯一の置き場**。
+かつて VS Code 拡張
 [legacy_vb_workbench](https://github.com/ishibashi0112/legacy_vb_workbench)
-(ローカル: `~/dev/legacy-vb-net-workbench`)からのコピーであり、
-**両リポジトリで同一実装を維持する**方針。
+(ローカル: `~/dev/legacy-vb-net-workbench`)と同一実装を二重管理していたが、
+workbench は 2026-09 時点で凍結(新機能は追わない)。
 
-- 対象: `types.ts` / `paths.ts` / `slnParser.ts` / `vbprojParser.ts` /
-  `logicalTreeBuilder.ts` / `services/repomixExporter.ts` /
-  `services/credentialMasker.ts` / `services/gitignoreService.ts` /
-  `services/designerSummary.ts`、および対応するテストと `test-fixtures/`
-- コアへの修正は必ず両リポジトリへ適用する
-- 意図的な差分は 2 か所のみ:
-  1. `repomixExporter.ts` 出力ヘッダーのツール名(こちらは「slnmix が」、
-     拡張側は「Legacy VB.NET Workbench が」)
-  2. Designer スキップ理由の文言(こちらは「オプション --include-designer」、
-     拡張側は「設定 exportIncludeDesignerFiles」)
-- CLI が定着したら共通コアのパッケージ化を検討する(現状は意図的にコピー運用)
+- コアの修正を拡張側へ同期する必要はない。出力ヘッダーのツール名や Designer
+  スキップ理由の文言を拡張側と揃える制約もない
+- 将来 workbench で新コアが必要になったら、slnmix に `index.ts` で公開 API を
+  追加して依存させる。パッケージ分離はそのとき検討する
 
-このリポジトリ固有(共有コア外・拡張側への同期不要)なのは以下のみ:
+改修の設計正本は `docs/HANDOFF-slnmix-petari-2026-09.md`。フェーズ順に実装し、
+決めたことは同書 §17 決定ログに追記する。
+
+### モジュール構成(コア外)
 
 - `src/cli.ts` — 引数処理とファイル I/O(Node 標準の `util.parseArgs` を使用し、
   依存追加はしない)
 - `src/targetResolver.ts` — 入力(.sln / .vbproj)の自動検出
-- `src/instructionFile.ts` — petari 規約文(protocol.md)の出力末尾への連結
-- 上記に対応するテスト
+- `src/designerFileFilter.ts` — `--include-designer-file` のパターン一致
+- `src/instructionFile.ts` — petari 規約文(protocol.md)の `<instruction>` 連結
+- `src/procedureFile.ts` / `src/assets/procedure.ts` — 作業手順文
+  `<procedure>`(内蔵既定文 or procedure.md)、`--task` / `--plan` の解決、
+  先頭リマインダ。内蔵文を変えたら `PROCEDURE_VERSION` を上げ
+  `test-fixtures/procedure/` のスナップショットを更新する
 
 ## コーディング方針
 
@@ -54,7 +56,7 @@ node dist/cli.js test-fixtures/solution/Sample.sln --stdout   # 動作確認
 
 ## リリース手順
 
-1. 変更をコミット(拡張側への同期も忘れずに)
+1. 変更をコミット
 2. `package.json` の version を上げてコミット
 3. `git push origin main`(https 資格情報で push 可能)
 4. **`npm publish` はメンテナー本人が実行**(npm アカウントはパスキー認証の
@@ -62,6 +64,6 @@ node dist/cli.js test-fixtures/solution/Sample.sln --stdout   # 動作確認
 
 ## 検証状況
 
-実業務プロジェクト(VS2013 世代・SPREAD 使用)での実地検証は
-拡張側と合わせて進行中。実データで UI サマリーの取りこぼしが見つかったら
-`designerSummary.ts` のパターンを拡充する(完全な VB 構文解析はしない方針)。
+実業務プロジェクト(VS2013 世代・SPREAD 使用)での実地検証は進行中。
+実データで UI サマリーの取りこぼしが見つかったら `designerSummary.ts` の
+パターンを拡充する(完全な VB 構文解析はしない方針)。
