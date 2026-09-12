@@ -95,6 +95,7 @@ const USAGE = `slnmix — .sln / .vbproj の論理構成に基づく repomix 互
 interface FsDeps {
 	fileExists(absolutePath: string): boolean;
 	listFileNames(absolutePath: string): string[] | undefined;
+	listFilesRecursive(absoluteDir: string): string[] | undefined;
 }
 
 const FS_DEPS: FsDeps = {
@@ -108,6 +109,33 @@ const FS_DEPS: FsDeps = {
 		} catch {
 			return undefined;
 		}
+	},
+	// SDK スタイルの既定グロブ展開用。シンボリックリンクは辿らない(循環防止)。
+	// bin / obj 等の除外はパーサー側で行う(ここは列挙のみ)
+	listFilesRecursive: (absoluteDir) => {
+		let entries: fs.Dirent[];
+		try {
+			entries = fs.readdirSync(absoluteDir, { withFileTypes: true });
+		} catch {
+			return undefined;
+		}
+		const results: string[] = [];
+		const walk = (dir: string, dirEntries: fs.Dirent[]): void => {
+			for (const entry of dirEntries) {
+				const full = path.join(dir, entry.name);
+				if (entry.isDirectory()) {
+					try {
+						walk(full, fs.readdirSync(full, { withFileTypes: true }));
+					} catch {
+						// 読めないディレクトリは飛ばす(取れた分だけ出す)
+					}
+				} else if (entry.isFile()) {
+					results.push(full);
+				}
+			}
+		};
+		walk(absoluteDir, entries);
+		return results;
 	},
 };
 

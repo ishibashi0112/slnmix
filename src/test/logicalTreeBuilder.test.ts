@@ -45,6 +45,8 @@ function makeResult(items: ProjectItem[]): VbprojParseResult {
 	return {
 		projectPath: "/tmp/proj/Test.vbproj",
 		projectDir: "/tmp/proj",
+		projectStyle: "legacy",
+		defaultCompileGlobExpanded: false,
 		items,
 		diagnostics: [],
 	};
@@ -280,6 +282,8 @@ suite("logicalTreeBuilder: buildSolutionTree", () => {
 			...makeResult([makeItem({ include: "Forms\\Shared.vb" })]),
 			projectPath: "/tmp/proj2/Other.vbproj",
 			projectDir: "/tmp/proj2",
+			projectStyle: "legacy",
+			defaultCompileGlobExpanded: false,
 		};
 		const ids = new Set<string>();
 		const collect = (node: LegacyTreeNode): void => {

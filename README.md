@@ -31,6 +31,8 @@ DependentUpon 解決済み)に基づいてエクスポートします。
 - Designer 関連・`.resx` は既定で除外(オプションで含められる)
 - 除外した `*.Designer.vb` は **UI サマリー**として要約を自動埋め込み(下記)
 - 除外・未解決のファイルは `<skipped_files>` に明記(黙って捨てない)
+- SDK スタイル `.vbproj`(`<Project Sdk="...">`)は既定の Compile グロブ
+  `**/*.vb` を展開して扱い、展開したことを出力に明記(下記)
 - `.sln` と同じフォルダに `.sln` から参照されていない `.vbproj` があれば警告
   (`.sln` だけが古い場合のエクスポート漏れに気付ける)
 - 入力と同じフォルダの `protocol.md`([petari](https://github.com/ishibashi0112/petari)
@@ -114,13 +116,37 @@ npx slnmix Sub\Project.vbproj --stdout
   -h, --help              ヘルプ
 ```
 
+## SDK スタイル .vbproj
+
+`<Project Sdk="Microsoft.NET.Sdk">`(または `<Import Project="Sdk.props" Sdk="..." />`)
+形式のプロジェクトは `Compile` を書かず、プロジェクトフォルダ配下の `**/*.vb` が
+暗黙に含まれます。slnmix はこの既定グロブだけを展開します。
+
+- 除外: `bin/**`、`obj/**`、`**/*.user`、ドットで始まるフォルダ、
+  `<Compile Remove="...">`、`<DefaultItemExcludes>` の追加パターン
+  (ワイルドカードは `**` / `*` / `?` のみ解釈)
+- `<EnableDefaultCompileItems>false</EnableDefaultCompileItems>` なら展開しない
+- 明示した `<Compile Include>` は従来どおり。`<Compile Update>` は一致する
+  項目への `DependentUpon` / `SubType` 等のメタデータ付与として解釈
+- `*.Designer.vb` の判定はファイル名規則で同様に行う(UI サマリーも同じ)
+- 展開したことは `<file_summary>` に「MSBuild の完全評価ではない」と明記
+
+旧スタイルと SDK スタイルが同じ `.sln` に混在していても、それぞれの形式で
+扱います(WinForms + WebView2 のようなハイブリッド構成向け)。
+
 ## できないこと(仕様)
 
 MSBuild の完全評価は行いません(静的 XML 解析のみ)。
 
-- `$(Property)` / `@(Item)` / ワイルドカードを含む `Include` は展開せず、未解決として `<skipped_files>` に記載
+- 旧スタイルの `$(Property)` / `@(Item)` / ワイルドカードを含む `Include` は
+  展開せず、未解決として `<skipped_files>` に記載
 - `Condition` は評価せず、条件付き項目としてそのまま含める
+  (SDK スタイルの `EnableDefaultCompileItems` 等が `Condition` 付きなら、
+  評価せず値を採用してその旨を診断に残す)
 - `Import` された `.targets` / `.props` は展開しない
+- SDK スタイルで `BaseOutputPath` / `BaseIntermediateOutputPath` を変更していても
+  `bin` / `obj` の既定値で除外する。`Compile` 以外の既定グロブ
+  (`EmbeddedResource` の `**/*.resx` 等)は展開しない(`.resx` は元々出力対象外)
 
 推測で補完せず、解決できないものは解決できないと明記する方針です。
 

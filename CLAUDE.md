@@ -41,7 +41,9 @@ workbench は 2026-09 時点で凍結(新機能は追わない)。
 - TypeScript strict。`any` 禁止、`unknown` + 型ガード
 - 依存は最小(fast-xml-parser / iconv-lite / ignore の 3 つ)
 - 静的 XML 解析のみ。MSBuild 式・Condition・ワイルドカードは評価せず
-  「未解決」として明記する。推測で補完しない
+  「未解決」として明記する。推測で補完しない。唯一の例外は SDK スタイル
+  .vbproj の既定 Compile グロブ(`**/*.vb`)の展開で、展開したことを診断と
+  出力ヘッダーに明記する(`globMatcher.ts` は `**` / `*` / `?` のみ解釈)
 - 壊れた入力でもクラッシュせず、取れた分だけ出す
 - Windows パス前提(`path.win32` 相当の扱い)。ただし Mac での開発・テストも
   動くよう相対パス解決は実行環境の区切りへ変換

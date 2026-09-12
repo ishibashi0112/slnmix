@@ -59,12 +59,28 @@ export interface ParseDiagnostic {
 	itemInclude?: string;
 }
 
+/**
+ * .vbproj の形式。
+ * - legacy: 旧スタイル(ToolsVersion / xmlns 付き。Compile を明示列挙)
+ * - sdk: SDK スタイル(`<Project Sdk="...">` または `<Import Sdk="...">`。
+ *   Compile を書かず `**\/*.vb` が暗黙に含まれる)
+ */
+export type ProjectStyle = "legacy" | "sdk";
+
 /** parseVbproj の戻り値 */
 export interface VbprojParseResult {
 	/** 解析対象 .vbproj の絶対パス */
 	projectPath: string;
 	/** .vbproj のあるディレクトリ(相対パス解決の基準) */
 	projectDir: string;
+	projectStyle: ProjectStyle;
+	/**
+	 * SDK スタイルで既定の Compile グロブ(`**\/*.vb`)を展開したか。
+	 * legacy、または EnableDefaultCompileItems=false のときは false。
+	 * true のとき items には展開した項目が resolved として含まれる
+	 * (MSBuild の完全評価ではない旨を出力側で明記する)
+	 */
+	defaultCompileGlobExpanded: boolean;
 	items: ProjectItem[];
 	diagnostics: ParseDiagnostic[];
 }

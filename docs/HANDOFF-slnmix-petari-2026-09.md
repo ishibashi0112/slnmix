@@ -631,3 +631,9 @@ End Class
 | 2026-09-12 | 内蔵既定文の plan / implement で「(full と同じ)」となっていた箇所は実文に展開する | AI には full の文面が見えないため参照できない |
 | 2026-09-12 | `--print-procedure` は `procedure.md` の有無に関わらず内蔵既定文を出す | カスタマイズの起点は常に既定文。上書き後の確認は通常出力で行う |
 | 2026-09-12 | フェーズ W のうち workbench 側(README / CLAUDE.md への凍結追記)はセッション A の対象外(slnmix のみ)として残す | 複数リポジトリを跨ぐ変更はセッションを分ける運用 |
+| 2026-09-12 | SDK スタイルの既定除外は `bin/**` / `obj/**` / `**/*.user` / `**/.*/**`(ドットフォルダ)に固定。`BaseOutputPath` 等のプロパティは読まない | Microsoft.NET.Sdk の既定値をそのまま使う。プロパティ評価に踏み込むと MSBuild 評価の再実装になる |
+| 2026-09-12 | 既定グロブの展開は `Compile` のみ(`EmbeddedResource` の `**/*.resx` は展開しない) | `.resx` は元々出力対象外。§7 の範囲に留める |
+| 2026-09-12 | 明示 `<Compile Include>` と展開結果が同じファイルを指す場合は明示側を採り、重複件数を診断に残す | MSBuild では NETSDK1022 エラーになるが、静的解析では止めずに取れた分を出す |
+| 2026-09-12 | `<Compile Remove>` / `<Compile Update>` は旧スタイルでも解釈する(Update は一致項目へのメタデータ付与、Remove は適用対象なしとして info) | Remove / Update は MSBuild 15 以降の構文で形式に依存しない。旧スタイルで `Include 属性のない要素` 扱いにして警告するのは誤り |
+| 2026-09-12 | `EnableDefaultCompileItems` 等が `Condition` 付き `PropertyGroup` にある場合は評価せず値を採用し、その旨を info に残す | 原則 3(推測したときは宣言する) |
+| 2026-09-12 | ファイル走査(`listFilesRecursive`)は SDK スタイルのときだけ呼び、シンボリックリンクは辿らない | 旧スタイルの挙動を変えない。循環防止 |

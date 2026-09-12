@@ -399,6 +399,10 @@ export function buildRepomixOutput(
 					)
 					.join("\n");
 
+	const sdkExpandedLabels = sources
+		.filter((source) => source.parseResult.defaultCompileGlobExpanded)
+		.map((source) => source.label);
+
 	const content = [
 		`このファイルは slnmix が「${title}」の論理構成(.sln / .vbproj)に基づき、ソースコードを 1 ファイルにまとめたものです(Repomix 形式)。`,
 		"",
@@ -436,6 +440,11 @@ export function buildRepomixOutput(
 		deps.ignoreReasonFor !== undefined
 			? "- .gitignore / .repomixignore に一致するファイルは除外済み(本家 repomix と同様)"
 			: "- .gitignore は考慮していない(設定 exportRespectGitignore で無効化されている)",
+		...(sdkExpandedLabels.length > 0
+			? [
+					`- SDK スタイルのプロジェクト(${sdkExpandedLabels.join(", ")})は Compile を明示列挙しないため、既定の Compile グロブ(**/*.vb)を展開した(bin/ obj/ ドットフォルダ・*.user・<Compile Remove> は除外)。MSBuild の完全評価ではない`,
+				]
+			: []),
 		"- 除外・未解決のファイルは <skipped_files> を参照",
 		"- このファイルは読み取り専用の成果物であり、編集しても元のプロジェクトには反映されない",
 		"</notes>",

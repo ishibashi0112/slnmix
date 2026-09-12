@@ -408,3 +408,59 @@ suite("repomixExporter: decodeSourceBuffer", () => {
 		assert.strictEqual(decodeSourceBuffer(buffer), original);
 	});
 });
+
+suite("repomixExporter: SDK スタイルの既定グロブ展開の宣言", () => {
+	function parseSdkFixture(relative: string): VbprojParseResult {
+		const projectPath = path.join(FIXTURES_ROOT, "sdk-style", ...relative.split("/"));
+		const listFilesRecursive = (dir: string): string[] => {
+			const results: string[] = [];
+			for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+				const full = path.join(dir, entry.name);
+				if (entry.isDirectory()) {
+					results.push(...listFilesRecursive(full));
+				} else if (entry.isFile()) {
+					results.push(full);
+				}
+			}
+			return results;
+		};
+		return parseVbproj(fs.readFileSync(projectPath, "utf8"), projectPath, {
+			fileExists: (p) => fs.existsSync(p),
+			listFilesRecursive,
+		});
+	}
+
+	test("展開したプロジェクトがあれば <file_summary> に展開の宣言が入り、展開ファイルが出力される", () => {
+		const result = buildRepomixOutput(
+			"SdkStyle.sln",
+			[
+				{ label: "SdkBasic", parseResult: parseSdkFixture("SdkBasic/SdkBasic.vbproj") },
+				{ label: "SdkNoDefault", parseResult: parseSdkFixture("SdkNoDefault/SdkNoDefault.vbproj") },
+			],
+			fakeDeps,
+			{ includeSensitive: false, maskCredentials: false },
+		);
+		assert.ok(
+			result.content.includes(
+				"- SDK スタイルのプロジェクト(SdkBasic)は Compile を明示列挙しないため、既定の Compile グロブ(**/*.vb)を展開した",
+			),
+		);
+		assert.ok(result.content.includes("MSBuild の完全評価ではない"));
+		assert.ok(result.content.includes('<file path="SdkBasic\\Api\\Service.vb">'));
+		assert.ok(result.content.includes('<file path="SdkBasic\\Shared\\Helper.vb">'));
+		assert.ok(result.content.includes('<file path="SdkNoDefault\\Only.vb">'));
+		assert.ok(!result.content.includes("Excluded"));
+		assert.ok(!result.content.includes("Ignored.vb"));
+		assert.ok(!result.content.includes("BinGen"));
+	});
+
+	test("旧スタイルだけなら宣言は入らない(従来出力のまま)", () => {
+		const result = buildRepomixOutput(
+			"Basic.vbproj",
+			[{ label: "Basic", parseResult: parseBasic() }],
+			fakeDeps,
+			{ includeSensitive: false, maskCredentials: false },
+		);
+		assert.ok(!result.content.includes("SDK スタイルのプロジェクト"));
+	});
+});
