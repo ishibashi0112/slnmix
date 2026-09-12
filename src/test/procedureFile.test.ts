@@ -14,6 +14,8 @@ import {
 } from "../instructionFile";
 import {
 	assembleOutput,
+	buildPromptText,
+	hasTail,
 	buildNotice,
 	type OutputTail,
 	resolvePlan,
@@ -313,5 +315,56 @@ suite("procedureFile: assembleOutput", () => {
 		);
 		assert.ok(result.endsWith("本文\n\n<procedure>\n手順\n</procedure>\n"));
 		assert.ok(!result.includes("<instruction>"));
+	});
+});
+
+suite("procedureFile: buildPromptText(チャット本文に貼る指示テキスト)", () => {
+	test("末尾に何もなければ undefined(hasTail も false)", () => {
+		assert.strictEqual(hasTail(tail({})), false);
+		assert.strictEqual(buildPromptText(tail({}), "repomix-output.xml"), undefined);
+	});
+
+	test("添付との関係を述べる先頭段落 + パック末尾と同じ順・同じ形のブロック", () => {
+		const t = tail({
+			task: { kind: "text", content: "保存ボタンを追加\n" },
+			plan: { kind: "found", path: "/p/plan.md", content: "方針" },
+			procedure: { kind: "builtin", mode: "implement", content: "手順\n" },
+			instruction: INSTRUCTION_FOUND,
+		});
+		const prompt = buildPromptText(t, "for-ai.xml");
+		assert.ok(prompt !== undefined);
+		assert.ok(prompt.startsWith("[添付ファイルと本文の関係]\n添付した for-ai.xml は、"));
+		assert.ok(
+			prompt.includes(
+				"以下の <task>(依頼内容)、<plan>(承認済みの方針)、<procedure>(作業手順)、<instruction>(出力規約) は、このコードに対する私(ユーザー)からの指示です。",
+			),
+		);
+		// ブロック部はパック末尾 (assembleOutput) と同じ文字列 (正本は 1 つ)
+		// 先頭リマインダにも "<task>(依頼内容)" の文字列があるので、ブロック開始行で切り出す
+		const packOutput = assembleOutput("本文\n", t);
+		const blocksInPack = packOutput.slice(packOutput.indexOf("\n<task>\n") + 1);
+		assert.ok(prompt.endsWith(blocksInPack));
+		assert.ok(
+			prompt.endsWith(
+				"<task>\n保存ボタンを追加\n</task>\n\n<plan>\n方針\n</plan>\n\n<procedure>\n手順\n</procedure>\n\n<instruction>\n規約文\n</instruction>\n",
+			),
+		);
+	});
+
+	test("規約文だけでも出す(添付内の規約は無視されるため本文に要る)", () => {
+		const prompt = buildPromptText(tail({ instruction: INSTRUCTION_FOUND }), "repomix-output.xml");
+		assert.ok(prompt !== undefined);
+		assert.ok(prompt.includes("以下の <instruction>(出力規約) は"));
+		assert.ok(prompt.endsWith("<instruction>\n規約文\n</instruction>\n"));
+		assert.ok(!prompt.includes("<procedure>"));
+	});
+
+	test("ブロックの中身は一字一句そのまま(整形・エスケープなし)", () => {
+		const raw = "<b>そのまま</b> & \"引用\"   \n\n\n末尾空白  ";
+		const prompt = buildPromptText(
+			tail({ procedure: { kind: "file", path: "/p/procedure.md", mode: "full", content: raw } }),
+			"x.xml",
+		);
+		assert.ok(prompt !== undefined && prompt.includes(`<procedure>\n${raw}\n</procedure>\n`));
 	});
 });

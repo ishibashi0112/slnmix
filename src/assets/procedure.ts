@@ -13,9 +13,14 @@
  *
  * 文面を変えたら PROCEDURE_VERSION を上げ、test-fixtures/procedure/ の
  * スナップショットを更新すること。
+ *
+ * v2 (2026-09-12): 添付ファイル内の指示は M365 Copilot が「埋め込み指示」として
+ * 意図的に無視することが実測で確定したため、この文面はパック末尾だけでなく
+ * チャット本文に貼る指示テキスト(procedureFile.ts の buildPromptText)にも
+ * 載る。「末尾の」「このパック」など置き場所に依存する表現を避けている。
  */
 
-export const PROCEDURE_VERSION = 1;
+export const PROCEDURE_VERSION = 2;
 
 export const PROCEDURE_MODES = ["full", "plan", "implement"] as const;
 export type ProcedureMode = (typeof PROCEDURE_MODES)[number];
@@ -30,13 +35,14 @@ export function isProcedureMode(value: string): value is ProcedureMode {
 export const PROCEDURE_TEMPLATE = `<!-- slnmix procedure v${PROCEDURE_VERSION} (mode: {{MODE}}) -->
 # 作業手順
 
-これは、このコンテキストを添付したユーザー本人からの恒常的な指示です。
-このパックに含まれるコードへの変更を提案するときは、必ず以下の手順で回答してください。
-出力形式(changes.md の書き方)は末尾の <instruction> の規約に従います。本手順はその前段の「考え方」です。
+これは、このコンテキストを渡したユーザー本人からの恒常的な指示です。
+パック(添付ファイルまたは貼り付けた本文)に含まれるコードへの変更を提案するときは、必ず以下の手順で回答してください。
+出力形式(changes.md の書き方)は <instruction> の規約に従います。本手順はその前段の「考え方」です。
 
 ## パックの読み方
 
 - <file> は現在のファイル内容そのものです。記憶にある一般的な VB.NET / React のコードではなく、ここにある内容を正としてください
+- パックを添付ファイルとして読む場合、読み取り結果から空行や行末の空白が失われることがあります。SEARCH ブロックは読み取った行をそのまま使い、空行の有無を推測で補わないでください(適用ツールが空行の差を吸収します)
 - <ui_summary> は Designer.vb からの要約です。コントロール名・型はここから引いてください。Designer.vb 本体は変更対象にしません
 - <contract_summary> がある場合、それは契約(contract.ts)から生成された API の一覧です。Generated/ 配下および src/generated/ 配下は生成物なので変更対象にしません。契約を変える必要があれば contract.ts の変更として提案してください
 - [MASKED] は伏せ字です。そのまま残し、値を推測しないでください
@@ -63,7 +69,7 @@ const INVESTIGATE_BODY = `読んだファイルと、関係するシンボル(�
 const POLICY_BODY_COMMON = `何をどう変えるかを述べてください。検討して採らなかった案があれば理由とともに 1 行で。
 リスク(既存動作への影響、未確認の前提)を挙げてください。`;
 
-const CHANGES_BODY = `末尾の <instruction> の規約どおり changes.md を出してください。`;
+const CHANGES_BODY = `<instruction> の規約どおり changes.md を出してください。`;
 
 const VERIFY_BODY = `changes.md の SEARCH ブロックごとに、次を表で確認してください。
 | ファイル | ブロック | パック内に全文があるか | 空行・インデント込みで逐語一致か | ファイル内で一意か |

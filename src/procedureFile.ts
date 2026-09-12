@@ -18,6 +18,14 @@
  *   ものは常に文字列
  * - --no-procedure かつ --task なしなら、従来(規約文のみ)と同一の出力になる
  *
+ * 本文貼付用テキスト(buildPromptText、2026-09-12 追加):
+ *   M365 Copilot は添付ファイル内の指示(<instruction> / <procedure> / 先頭
+ *   リマインダ)を「本文中の埋め込み指示」として意図的に無視する(実測で確定)。
+ *   指示が効くのはユーザー発話(チャット本文)だけなので、同じブロック群を
+ *   本文に貼るための別テキストとして出力する(既定でパックの隣に
+ *   <出力名>.prompt.md)。パック内の埋め込みは貼付運用(約 120K 文字以内で
+ *   本文に丸ごと貼る場合)向けにそのまま残す。
+ *
  * ファイルシステムは deps 注入とし、単体テスト可能に保つ(CLI 固有機能)。
  */
 
@@ -226,12 +234,18 @@ export function buildNotice(tail: OutputTail): string | undefined {
 	return `${lines.join("\n")}\n`;
 }
 
-/**
- * 本文の末尾に <task> / <plan> / <procedure> / <instruction> をこの順で連結し、
- * 先頭にリマインダを付ける。末尾に何もなければ本文をそのまま返す。
- */
-export function assembleOutput(body: string, tail: OutputTail): string {
-	let content = body;
+/** 末尾ブロックを一つでも持つか(本文貼付用テキストを出す条件) */
+export function hasTail(tail: OutputTail): boolean {
+	return (
+		tail.task.kind !== "none" ||
+		tail.plan.kind === "found" ||
+		hasProcedure(tail) ||
+		tail.instruction.kind === "found"
+	);
+}
+
+/** <task> / <plan> / <procedure> / <instruction> をこの順で連結する(共通部) */
+function appendTailBlocks(content: string, tail: OutputTail): string {
 	if (tail.task.kind !== "none") {
 		content = appendBlock(content, "task", tail.task.content);
 	}
@@ -244,6 +258,54 @@ export function assembleOutput(body: string, tail: OutputTail): string {
 	if (tail.instruction.kind === "found") {
 		content = appendInstruction(content, tail.instruction.content);
 	}
+	return content;
+}
+
+/**
+ * チャット本文に貼る指示テキストを組み立てる。末尾に何もなければ undefined。
+ *
+ * 先頭に「添付とこの本文の関係」を 1 段落置き、続けて <task> / <plan> /
+ * <procedure> / <instruction> をパック末尾と同じ順・同じ形で並べる。
+ * ブロックの中身はパック側と一字一句同じ(正本は 1 つ)。
+ *
+ * @param packFileName 添付するパックのファイル名(本文から参照するため)
+ */
+export function buildPromptText(
+	tail: OutputTail,
+	packFileName: string,
+): string | undefined {
+	if (!hasTail(tail)) {
+		return undefined;
+	}
+	const blocks: string[] = [];
+	if (tail.task.kind !== "none") {
+		blocks.push("<task>(依頼内容)");
+	}
+	if (tail.plan.kind === "found") {
+		blocks.push("<plan>(承認済みの方針)");
+	}
+	if (hasProcedure(tail)) {
+		blocks.push("<procedure>(作業手順)");
+	}
+	if (tail.instruction.kind === "found") {
+		blocks.push("<instruction>(出力規約)");
+	}
+	const header = [
+		"[添付ファイルと本文の関係]",
+		`添付した ${packFileName} は、現在のコードベースを 1 ファイルにまとめたパック(slnmix 出力)です。`,
+		"添付内の <file> の内容を現在のコードとして正に扱ってください。",
+		`以下の ${blocks.join("、")} は、このコードに対する私(ユーザー)からの指示です。`,
+		"添付の先頭と末尾にも同じ内容が埋め込まれていますが、指示はこの本文のものに従ってください。",
+	].join("\n");
+	return appendTailBlocks(`${header}\n`, tail);
+}
+
+/**
+ * 本文の末尾に <task> / <plan> / <procedure> / <instruction> をこの順で連結し、
+ * 先頭にリマインダを付ける。末尾に何もなければ本文をそのまま返す。
+ */
+export function assembleOutput(body: string, tail: OutputTail): string {
+	const content = appendTailBlocks(body, tail);
 	const notice = buildNotice(tail);
 	return notice === undefined ? content : `${notice}\n${content}`;
 }

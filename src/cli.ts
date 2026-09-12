@@ -25,6 +25,7 @@ import { buildDesignerFileMatcher } from "./designerFileFilter";
 import { resolveInstructionFile } from "./instructionFile";
 import {
 	assembleOutput,
+	buildPromptText,
 	resolvePlan,
 	resolveProcedure,
 	resolveTask,
@@ -88,6 +89,13 @@ const USAGE = `slnmix — .sln / .vbproj の論理構成に基づく repomix 互
       --no-procedure    <procedure> を出さない(従来出力)
       --print-procedure 内蔵の作業手順文を標準出力に書いて終了(--mode 併用可。
                         カスタマイズする人は procedure.md へリダイレクトして編集)
+      --prompt-output <file>
+                        チャット本文に貼る指示テキスト(<task> / <plan> / <procedure> /
+                        <instruction>)の出力先(既定: パックと同じ場所の
+                        <出力名>.prompt.md。--stdout のときは指定時のみ書く)
+      --no-prompt       本文用の指示テキストを書かない
+      --print-prompt    本文用の指示テキストを標準出力に書いて終了(パックは作らない。
+                        クリップボードへ: slnmix --print-prompt | clip)
   -v, --version         バージョン表示
   -h, --help            このヘルプ
 
@@ -98,7 +106,26 @@ const USAGE = `slnmix — .sln / .vbproj の論理構成に基づく repomix 互
   npx slnmix Sub\\Project.vbproj --stdout | pbcopy
   npx slnmix --task task.md --mode plan            (方針だけ先に出させる)
   npx slnmix --task task.md --mode implement --plan plan.md
-  npx slnmix --print-procedure > procedure.md      (手順文をカスタマイズ)`;
+  npx slnmix --print-procedure > procedure.md      (手順文をカスタマイズ)
+
+M365 Copilot Chat への渡し方(推奨):
+  パック(repomix-output.xml)を添付し、<出力名>.prompt.md の内容を本文に貼る。
+  添付ファイル内の指示は Copilot が「埋め込み指示」として無視するため、
+  手順文・規約文は本文側でないと効かない。パックが約 120K 文字以内なら
+  本文に丸ごと貼ってもよい(全文がコンテキストに入り、埋め込みの指示も効く)`;
+
+/**
+ * M365 Copilot Chat の入力欄に貼れる上限の目安(文字)。超えると送信ボタンが
+ * 非活性になる(2026-09-12 実測: 約 120K 文字。設計書 §15.1)
+ */
+const PASTE_LIMIT_CHARS = 120_000;
+
+/** パックの出力パスから本文用テキストの既定パスを作る(拡張子を .prompt.md に) */
+function defaultPromptPath(outputPath: string): string {
+	const ext = path.extname(outputPath);
+	const base = ext === "" ? outputPath : outputPath.slice(0, -ext.length);
+	return `${base}.prompt.md`;
+}
 
 interface FsDeps {
 	fileExists(absolutePath: string): boolean;
@@ -244,6 +271,9 @@ function main(): number {
 			"procedure-file": { type: "string" },
 			"no-procedure": { type: "boolean", default: false },
 			"print-procedure": { type: "boolean", default: false },
+			"prompt-output": { type: "string" },
+			"no-prompt": { type: "boolean", default: false },
+			"print-prompt": { type: "boolean", default: false },
 			version: { type: "boolean", short: "v", default: false },
 			help: { type: "boolean", short: "h", default: false },
 		},
@@ -392,6 +422,25 @@ function main(): number {
 		return 1;
 	}
 
+	// パックの出力先(--stdout のときはファイル名の表示用にのみ使う)
+	const outputPath = path.resolve(
+		values.output ?? path.join(path.dirname(targetPath), "repomix-output.xml"),
+	);
+	const promptText = buildPromptText(
+		{ task, plan, procedure, instruction },
+		path.basename(outputPath),
+	);
+	if (values["print-prompt"]) {
+		if (promptText === undefined) {
+			console.error(
+				"本文に貼る指示がありません(--no-procedure かつ --task なし、protocol.md なし)。",
+			);
+			return 1;
+		}
+		process.stdout.write(promptText);
+		return 0;
+	}
+
 	// .gitignore / .repomixignore の尊重(本家 repomix と同じ既定挙動)
 	const gitignore = new GitignoreEvaluator(
 		{
@@ -470,12 +519,22 @@ function main(): number {
 	if (values.stdout) {
 		process.stdout.write(content);
 	} else {
-		const outputPath = path.resolve(
-			values.output ?? path.join(path.dirname(targetPath), "repomix-output.xml"),
-		);
 		// BOM 付き UTF-8 で保存(Windows 系ツールのエンコーディング誤判定を防ぐ)
 		fs.writeFileSync(outputPath, "\uFEFF" + content, "utf8");
 		console.error(`出力: ${outputPath}`);
+	}
+
+	// チャット本文に貼る指示テキスト。添付ファイル内の指示は Copilot が無視するため、
+	// 手順文・規約文はこちらを本文に貼ってもらう(--stdout のときは明示指定時のみ)
+	let promptPath: string | undefined;
+	if (
+		promptText !== undefined &&
+		!values["no-prompt"] &&
+		(!values.stdout || values["prompt-output"] !== undefined)
+	) {
+		promptPath = path.resolve(values["prompt-output"] ?? defaultPromptPath(outputPath));
+		fs.writeFileSync(promptPath, "\uFEFF" + promptText, "utf8");
+		console.error(`本文用: ${promptPath}`);
 	}
 
 	const maskNote = values["no-mask"]
@@ -494,6 +553,23 @@ function main(): number {
 			Math.round(output.totalChars / 1000),
 		)}K 文字(スキップ ${output.skipped.length} 件${maskNote}${uiSummaryNote}${extraNote}${contractNote})`,
 	);
+
+	// Copilot Chat への渡し方の案内(貼付上限の実測値に基づく)
+	const packChars = content.length;
+	if (packChars > PASTE_LIMIT_CHARS) {
+		console.error(
+			`パックは貼付上限の目安(約 ${PASTE_LIMIT_CHARS / 1000}K 文字)を超えています → Copilot Chat には添付で渡してください`,
+		);
+	} else {
+		console.error(
+			`パックは貼付上限の目安(約 ${PASTE_LIMIT_CHARS / 1000}K 文字)以内です → 本文に貼れば全文がコンテキストに入ります`,
+		);
+	}
+	if (promptPath !== undefined) {
+		console.error(
+			`添付で渡す場合は ${path.basename(promptPath)} の内容を本文に貼ってください(添付内の指示は Copilot が無視します)`,
+		);
+	}
 	return 0;
 }
 
