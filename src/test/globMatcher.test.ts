@@ -46,3 +46,20 @@ suite("globMatcher", () => {
 		assert.strictEqual(normalizeGlobPath("./a//b"), "a/b");
 	});
 });
+
+suite("globMatcher: ブレース展開", () => {
+	test("{ts,tsx} は選択肢として展開される", () => {
+		assert.ok(globMatches("**/*.{ts,tsx,css}", "src/App.tsx"));
+		assert.ok(globMatches("**/*.{ts,tsx,css}", "src/a/b.css"));
+		assert.ok(!globMatches("**/*.{ts,tsx,css}", "src/a/b.md"));
+	});
+
+	test("ブレースが複数あっても展開される", () => {
+		assert.ok(globMatches("{src,lib}/**/*.{js,jsx}", "lib/x/y.jsx"));
+		assert.ok(!globMatches("{src,lib}/**/*.{js,jsx}", "test/x.js"));
+	});
+
+	test("閉じていないブレースはリテラル扱い", () => {
+		assert.ok(globMatches("a{b.vb", "a{b.vb"));
+	});
+});

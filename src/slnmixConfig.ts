@@ -1,0 +1,275 @@
+/**
+ * slnmix.config.json(任意)の読み込み。
+ *
+ * ルート(.sln のあるディレクトリ)直下に置く。**なくても動く**。
+ * ハイブリッド構成(WinForms + WebView2 + React)で、.vbproj に乗らない
+ * web 側・契約側のディレクトリを同じパックへ入れるための設定。
+ *
+ * - extraRoots: 宣言されたディレクトリだけを走査する(ディレクトリ走査を
+ *   しない原則の、明示的でスコープの狭い例外)
+ * - contractSchema / generatedDirs: 同じ場所に webview2-bridge.gen.json が
+ *   あれば自動検出して既定値にする。明示すれば上書き
+ *
+ * 壊れた設定でもクラッシュせず、診断に残して設定なしとして続行する。
+ * ファイルシステムは deps 注入(単体テスト可能)。
+ */
+
+import * as path from "path";
+import { normalizeGlobPath } from "./globMatcher";
+import type { ParseDiagnostic } from "./types";
+
+export const CONFIG_FILE_NAME = "slnmix.config.json";
+export const GEN_CONFIG_FILE_NAME = "webview2-bridge.gen.json";
+
+export interface ExtraRootConfig {
+	/** ルート相対のディレクトリ(`/` 区切りに正規化済み) */
+	path: string;
+	/** 用途の名前(出力の root 属性・グループ表示に使う)。例: web / contract */
+	kind: string;
+	/** path 基準の include グロブ。省略時は kind ごとの既定 */
+	include: string[];
+	/** path 基準の exclude グロブ(既定の除外に追加) */
+	exclude: string[];
+}
+
+export interface SlnmixConfig {
+	extraRoots: ExtraRootConfig[];
+	/** contract.schema.json のルート相対パス(なければ undefined) */
+	contractSchema?: string;
+	/** 契約の正本(contract.ts)のルート相対パス(<contract_summary> の説明用) */
+	contractFile?: string;
+	/** 生成コードのディレクトリ(ルート相対)。既定で除外し要約で代替する */
+	generatedDirs: string[];
+	/** 設定の出どころ(表示用)。例: ["slnmix.config.json", "webview2-bridge.gen.json"] */
+	sources: string[];
+}
+
+export interface SlnmixConfigDeps {
+	readTextFile(absolutePath: string): string | undefined;
+}
+
+export interface SlnmixConfigResult {
+	config: SlnmixConfig;
+	diagnostics: ParseDiagnostic[];
+}
+
+/** kind ごとの include 既定 */
+const DEFAULT_INCLUDE: Readonly<Record<string, readonly string[]>> = {
+	web: ["**/*.{ts,tsx,js,jsx,css,json,html}"],
+	contract: ["**/*.ts"],
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function asString(value: unknown): string | undefined {
+	return typeof value === "string" ? value : undefined;
+}
+
+function asStringArray(value: unknown): string[] | undefined {
+	if (!Array.isArray(value) || !value.every((v) => typeof v === "string")) {
+		return undefined;
+	}
+	return value;
+}
+
+/** ルート相対パスを `/` 区切り・末尾スラッシュなしに正規化 */
+export function normalizeRootRelative(value: string): string {
+	return normalizeGlobPath(value).replace(/\/+$/, "");
+}
+
+function parseJson(text: string): unknown {
+	return JSON.parse(text.replace(/^﻿/, ""));
+}
+
+export function defaultIncludeFor(kind: string): string[] {
+	return [...(DEFAULT_INCLUDE[kind] ?? ["**/*"])];
+}
+
+function parseExtraRoots(
+	value: unknown,
+	diagnostics: ParseDiagnostic[],
+): ExtraRootConfig[] {
+	if (value === undefined) {
+		return [];
+	}
+	if (!Array.isArray(value)) {
+		diagnostics.push({
+			severity: "warning",
+			message: `${CONFIG_FILE_NAME}: extraRoots は配列で指定してください(無視します)`,
+		});
+		return [];
+	}
+	const roots: ExtraRootConfig[] = [];
+	value.forEach((entry, index) => {
+		if (!isRecord(entry)) {
+			diagnostics.push({
+				severity: "warning",
+				message: `${CONFIG_FILE_NAME}: extraRoots[${index}] はオブジェクトで指定してください(無視します)`,
+			});
+			return;
+		}
+		const rawPath = asString(entry["path"]);
+		if (rawPath === undefined || rawPath.trim() === "") {
+			diagnostics.push({
+				severity: "warning",
+				message: `${CONFIG_FILE_NAME}: extraRoots[${index}] に path がありません(無視します)`,
+			});
+			return;
+		}
+		const rootPath = normalizeRootRelative(rawPath);
+		if (rootPath === "" || rootPath.startsWith("../") || path.isAbsolute(rawPath)) {
+			diagnostics.push({
+				severity: "warning",
+				message: `${CONFIG_FILE_NAME}: extraRoots[${index}].path はルート配下の相対パスで指定してください: ${rawPath}(無視します)`,
+			});
+			return;
+		}
+		const kind = asString(entry["kind"])?.trim() || "extra";
+		const include = asStringArray(entry["include"]);
+		if (entry["include"] !== undefined && include === undefined) {
+			diagnostics.push({
+				severity: "warning",
+				message: `${CONFIG_FILE_NAME}: extraRoots[${index}].include は文字列の配列で指定してください(既定を使います)`,
+			});
+		}
+		const exclude = asStringArray(entry["exclude"]);
+		if (entry["exclude"] !== undefined && exclude === undefined) {
+			diagnostics.push({
+				severity: "warning",
+				message: `${CONFIG_FILE_NAME}: extraRoots[${index}].exclude は文字列の配列で指定してください(無視します)`,
+			});
+		}
+		roots.push({
+			path: rootPath,
+			kind,
+			include: include !== undefined && include.length > 0 ? include : defaultIncludeFor(kind),
+			exclude: exclude ?? [],
+		});
+	});
+	return roots;
+}
+
+/**
+ * webview2-bridge.gen.json から contractSchema / generatedDirs の既定値を取る。
+ * 形式: { schemaOut, ts: { outDir }, vb: { outDir } }(いずれも任意)
+ */
+function readGenConfig(
+	rootDir: string,
+	deps: SlnmixConfigDeps,
+	diagnostics: ParseDiagnostic[],
+): { contractSchema?: string; contractFile?: string; generatedDirs: string[] } | undefined {
+	const text = deps.readTextFile(path.join(rootDir, GEN_CONFIG_FILE_NAME));
+	if (text === undefined) {
+		return undefined;
+	}
+	let parsed: unknown;
+	try {
+		parsed = parseJson(text);
+	} catch (error) {
+		diagnostics.push({
+			severity: "warning",
+			message: `${GEN_CONFIG_FILE_NAME} を JSON として読めません(無視します): ${
+				error instanceof Error ? error.message : String(error)
+			}`,
+		});
+		return undefined;
+	}
+	if (!isRecord(parsed)) {
+		return undefined;
+	}
+	const generatedDirs: string[] = [];
+	for (const section of ["vb", "ts"]) {
+		const sub = parsed[section];
+		const outDir = isRecord(sub) ? asString(sub["outDir"]) : undefined;
+		if (outDir !== undefined && outDir.trim() !== "") {
+			generatedDirs.push(normalizeRootRelative(outDir));
+		}
+	}
+	const schemaOut = asString(parsed["schemaOut"]);
+	const contract = asString(parsed["contract"]);
+	return {
+		contractSchema:
+			schemaOut !== undefined && schemaOut.trim() !== ""
+				? normalizeRootRelative(schemaOut)
+				: undefined,
+		contractFile:
+			contract !== undefined && contract.trim() !== ""
+				? normalizeRootRelative(contract)
+				: undefined,
+		generatedDirs,
+	};
+}
+
+/**
+ * @param rootDir ルート(.sln / .vbproj のあるディレクトリ)の絶対パス
+ */
+export function loadSlnmixConfig(
+	rootDir: string,
+	deps: SlnmixConfigDeps,
+): SlnmixConfigResult {
+	const diagnostics: ParseDiagnostic[] = [];
+	const config: SlnmixConfig = { extraRoots: [], generatedDirs: [], sources: [] };
+
+	let explicitSchema: string | undefined;
+	let explicitContractFile: string | undefined;
+	let explicitGenerated: string[] | undefined;
+
+	const text = deps.readTextFile(path.join(rootDir, CONFIG_FILE_NAME));
+	if (text !== undefined) {
+		let parsed: unknown;
+		try {
+			parsed = parseJson(text);
+		} catch (error) {
+			diagnostics.push({
+				severity: "warning",
+				message: `${CONFIG_FILE_NAME} を JSON として読めません(設定なしとして続行): ${
+					error instanceof Error ? error.message : String(error)
+				}`,
+			});
+			parsed = undefined;
+		}
+		if (parsed !== undefined && !isRecord(parsed)) {
+			diagnostics.push({
+				severity: "warning",
+				message: `${CONFIG_FILE_NAME} のトップレベルはオブジェクトで指定してください(設定なしとして続行)`,
+			});
+			parsed = undefined;
+		}
+		if (isRecord(parsed)) {
+			config.sources.push(CONFIG_FILE_NAME);
+			config.extraRoots = parseExtraRoots(parsed["extraRoots"], diagnostics);
+			const schema = asString(parsed["contractSchema"]);
+			if (schema !== undefined && schema.trim() !== "") {
+				explicitSchema = normalizeRootRelative(schema);
+			}
+			const contractFile = asString(parsed["contractFile"]);
+			if (contractFile !== undefined && contractFile.trim() !== "") {
+				explicitContractFile = normalizeRootRelative(contractFile);
+			}
+			const generated = asStringArray(parsed["generatedDirs"]);
+			if (parsed["generatedDirs"] !== undefined && generated === undefined) {
+				diagnostics.push({
+					severity: "warning",
+					message: `${CONFIG_FILE_NAME}: generatedDirs は文字列の配列で指定してください(無視します)`,
+				});
+			}
+			if (generated !== undefined) {
+				explicitGenerated = generated
+					.map(normalizeRootRelative)
+					.filter((dir) => dir !== "");
+			}
+		}
+	}
+
+	const gen = readGenConfig(rootDir, deps, diagnostics);
+	if (gen !== undefined) {
+		config.sources.push(GEN_CONFIG_FILE_NAME);
+	}
+	config.contractSchema = explicitSchema ?? gen?.contractSchema;
+	config.contractFile = explicitContractFile ?? gen?.contractFile;
+	config.generatedDirs = explicitGenerated ?? gen?.generatedDirs ?? [];
+
+	return { config, diagnostics };
+}

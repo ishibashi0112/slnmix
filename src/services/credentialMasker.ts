@@ -61,15 +61,17 @@ const IDENT_BODY = `${IDENT_HEAD}0-9.\\uFF10-\\uFF19`;
 
 /**
  * 接続文字列・設定のキー=値(パスワード系)。
- * 値は ; " & < > 改行 まで(接続文字列のセパレータで停止)
+ * 値は ; " & < > 改行 まで(接続文字列のセパレータで停止)。値の先頭が
+ * 空白・引用符のもの(`KEY = "..."` のようなコードの代入)は対象外にし、
+ * 引用符内は文字列リテラルとして別途(高エントロピー判定で)扱う
  */
 const CONNSTR_SECRET =
-	/\b(password|passwd|pswd|pwd|pass|secret|api[_-]?key|apikey|access[_-]?key|secret[_-]?key|token)(\s*=\s*)([^;"&<>\r\n:][^;"&<>\r\n]*)/gi;
+	/\b(password|passwd|pswd|pwd|pass|secret|api[_-]?key|apikey|access[_-]?key|secret[_-]?key|token)(\s*=\s*)([^;"&<>\r\n:\s][^;"&<>\r\n]*)/gi;
 
 /** 接続文字列のユーザー系キー(User ID / UID など明確なもののみ)。
  *  値の先頭 : は SQL バインド変数(UID = :UID 等)のため対象外 */
 const CONNSTR_USER =
-	/\b(user\s*id|userid|username|uid)(\s*=\s*)([^;"&<>\r\n:][^;"&<>\r\n]*)/gi;
+	/\b(user\s*id|userid|username|uid)(\s*=\s*)([^;"&<>\r\n:\s][^;"&<>\r\n]*)/gi;
 
 /**
  * 日本語キー=値(設定ファイル・接続文字列・リテラル内)。

@@ -1,8 +1,9 @@
 /**
  * MSBuild のワイルドカード(`**` / `*` / `?`)の最小限の一致判定。
  *
- * SDK スタイル .vbproj の既定グロブ展開と、`<Compile Remove="...">` /
- * `<Compile Update="...">` / `DefaultItemExcludes` の解釈にだけ使う。
+ * SDK スタイル .vbproj の既定グロブ展開、`<Compile Remove="...">` /
+ * `<Compile Update="...">` / `DefaultItemExcludes` の解釈、および
+ * slnmix.config.json の extraRoots(include / exclude)に使う。
  * MSBuild 式 $()/@()/%() は扱わない(呼び出し側で未解決として扱う)。
  *
  * - パターン・対象パスとも `\` と `/` を同一視し、大文字小文字は区別しない
@@ -24,15 +25,15 @@ export function normalizeGlobPath(value: string): string {
 		.replace(/\/{2,}/g, "/");
 }
 
-export function globToRegExp(pattern: string): RegExp {
-	const normalized = normalizeGlobPath(pattern.trim());
+/** ブレース `{a,b}` を含まない部分をパターン→正規表現ソースへ変換する */
+function convertPlain(text: string): string {
 	let source = "";
 	let i = 0;
-	while (i < normalized.length) {
-		const ch = normalized[i];
-		if (ch === "*" && normalized[i + 1] === "*") {
+	while (i < text.length) {
+		const ch = text[i];
+		if (ch === "*" && text[i + 1] === "*") {
 			// `**/` は 0 個以上のディレクトリ、末尾や `/` が続かない `**` は何でも
-			if (normalized[i + 2] === "/") {
+			if (text[i + 2] === "/") {
 				source += "(?:.*/)?";
 				i += 3;
 			} else {
@@ -49,6 +50,32 @@ export function globToRegExp(pattern: string): RegExp {
 			source += escapeRegExp(ch);
 		}
 		i += 1;
+	}
+	return source;
+}
+
+/**
+ * パターンを正規表現へ変換する。`{ts,tsx}` のようなブレース(入れ子なし)は
+ * 選択肢として展開する(extraRoots の include 指定用)。
+ */
+export function globToRegExp(pattern: string): RegExp {
+	const normalized = normalizeGlobPath(pattern.trim());
+	let source = "";
+	let rest = normalized;
+	while (rest.length > 0) {
+		const open = rest.indexOf("{");
+		const close = open >= 0 ? rest.indexOf("}", open) : -1;
+		if (open < 0 || close < 0) {
+			source += convertPlain(rest);
+			break;
+		}
+		source += convertPlain(rest.slice(0, open));
+		const alternatives = rest
+			.slice(open + 1, close)
+			.split(",")
+			.map((alt) => convertPlain(alt.trim()));
+		source += `(?:${alternatives.join("|")})`;
+		rest = rest.slice(close + 1);
 	}
 	return new RegExp(`^${source}$`, "i");
 }

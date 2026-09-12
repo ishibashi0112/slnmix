@@ -35,6 +35,13 @@ workbench は 2026-09 時点で凍結(新機能は追わない)。
   `<procedure>`(内蔵既定文 or procedure.md)、`--task` / `--plan` の解決、
   先頭リマインダ。内蔵文を変えたら `PROCEDURE_VERSION` を上げ
   `test-fixtures/procedure/` のスナップショットを更新する
+- `src/slnmixConfig.ts` — `slnmix.config.json`(任意)と
+  `webview2-bridge.gen.json` の自動検出。`services/extraRootsCollector.ts`
+  (追加ディレクトリの走査)、`services/contractSummary.ts`
+  (`contract.schema.json` → `<contract_summary>`)がこれを使う
+- ルート = 入力(.sln / .vbproj)のあるディレクトリ。物理パス・設定ファイル・
+  protocol.md / procedure.md・.gitignore の基準はすべてここ。petari の
+  プロジェクトルートと一致させる運用(設計書 §14-3)
 
 ## コーディング方針
 
@@ -43,7 +50,11 @@ workbench は 2026-09 時点で凍結(新機能は追わない)。
 - 静的 XML 解析のみ。MSBuild 式・Condition・ワイルドカードは評価せず
   「未解決」として明記する。推測で補完しない。唯一の例外は SDK スタイル
   .vbproj の既定 Compile グロブ(`**/*.vb`)の展開で、展開したことを診断と
-  出力ヘッダーに明記する(`globMatcher.ts` は `**` / `*` / `?` のみ解釈)
+  出力ヘッダーに明記する(`globMatcher.ts` は `**` / `*` / `?` / `{a,b}` のみ解釈)
+- ディレクトリ走査はしない。例外は `slnmix.config.json` の `extraRoots` で
+  明示されたディレクトリだけ(スコープの狭い例外として README に明記)
+- `<file path>` はルート相対の物理パス・`/` 区切りが既定(v0.12.0〜)。
+  `--legacy-paths` で旧形式(1〜2 バージョン残して廃止)
 - 壊れた入力でもクラッシュせず、取れた分だけ出す
 - Windows パス前提(`path.win32` 相当の扱い)。ただし Mac での開発・テストも
   動くよう相対パス解決は実行環境の区切りへ変換

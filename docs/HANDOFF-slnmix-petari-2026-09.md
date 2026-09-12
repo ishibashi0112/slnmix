@@ -637,3 +637,10 @@ End Class
 | 2026-09-12 | `<Compile Remove>` / `<Compile Update>` は旧スタイルでも解釈する(Update は一致項目へのメタデータ付与、Remove は適用対象なしとして info) | Remove / Update は MSBuild 15 以降の構文で形式に依存しない。旧スタイルで `Include 属性のない要素` 扱いにして警告するのは誤り |
 | 2026-09-12 | `EnableDefaultCompileItems` 等が `Condition` 付き `PropertyGroup` にある場合は評価せず値を採用し、その旨を info に残す | 原則 3(推測したときは宣言する) |
 | 2026-09-12 | ファイル走査(`listFilesRecursive`)は SDK スタイルのときだけ呼び、シンボリックリンクは辿らない | 旧スタイルの挙動を変えない。循環防止 |
+| 2026-09-12 | ルートは入力(.sln / .vbproj)のあるディレクトリに固定(§14-3)。`slnmix.config.json` の `root` は作らない | protocol.md / .gitignore / 出力先の既定と同じ基準で分かりやすい。petari 側(`.git` 上方探索 or `--root`)と揃える運用は README に明記。`.sln` がリポジトリ直下にない構成が実際に出てきたら再検討 |
+| 2026-09-12 | ルート外のファイル(別ドライブの Link 等)は `path` を `プロジェクト名/論理パス`(/ 区切り)にし、`physical` / `outside_root` 属性と `<file_summary>` の一覧で「適用ツールの範囲外」と明記(§14-8) | パス自体は petari が拒否する形にしない(絶対パス・`..` を出さない)が、適用できないことは隠さない |
+| 2026-09-12 | 論理パスと物理パスが一致するファイルには `project` / `logical` 属性を付けない | 大半のファイルで冗長。差があるときだけ目立つ方が AI にも人にも読みやすい |
+| 2026-09-12 | `<contract_summary>` は extraRoots の `kind: contract` のファイル群の直後に置く(なければ `<files>` 末尾) | 「契約ファイルの直後」(§8.3)を、契約ファイル名を知らなくても実現できる規則にした |
+| 2026-09-12 | `contract.schema.json` は `contractVersion === 1` のみ要約する。それ以外は理由付きで `<skipped_files>` へ | §8.3 の「未知の形式なら要約しない」。zod は入れない |
+| 2026-09-12 | extraRoots の既定除外(node_modules 等)は件数だけ診断に残し、`<skipped_files>` には載せない | 数千件になり出力を汚す。`exclude` / バイナリ / `.gitignore` による除外は従来どおり 1 件ずつ載せる |
+| 2026-09-12 | 認証情報マスクの `KEY = 値` パターンは、値の先頭が空白・引用符のもの(コードの代入 `KEY = "..."`)を対象外にした | web 側(TS)で `= "` の間の空白が値として `[MASKED]` になり代入の形が壊れていた。引用符内は文字列リテラルとして高エントロピー判定で扱う |

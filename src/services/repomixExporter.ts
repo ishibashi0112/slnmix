@@ -8,18 +8,38 @@
  * - 文字コードはレガシー VB で多い Shift_JIS(CP932)を自動判定して UTF-8 へ統一
  * - EmbeddedResource(.resx)は常に除外、Designer 関連は既定で除外(オプションで含める)
  * - 除外・未解決のファイルは skipped_files に明記する(黙って捨てない)
+ * - <file path> は既定でルート相対の物理パス(`/` 区切り)。petari 等の
+ *   適用ツールがそのまま使える形にする。<directory_structure> は従来どおり
+ *   論理ツリー(人が読む用)。rootDir を渡さなければ従来の
+ *   `プロジェクト名\論理パス` 表記(--legacy-paths)
+ * - slnmix.config.json の extraRoots(web / 契約ディレクトリ)を同じパックへ
+ *   入れ、生成コードは除外して <contract_summary> で代替する
  *
- * ファイル読み込みは deps 注入とし、vscode 非依存の純粋ロジックに保つ。
+ * ファイル読み込みは deps 注入とし、純粋ロジックに保つ。
  */
 
 import * as iconv from "iconv-lite";
+import * as path from "path";
 import { buildLogicalTree } from "../logicalTreeBuilder";
+import type { ExtraRootConfig } from "../slnmixConfig";
+import type {
+	FileNode,
+	LegacyTreeNode,
+	ParseDiagnostic,
+	VbprojParseResult,
+} from "../types";
+import { isBinaryExtension } from "./binaryExtensions";
+import { summarizeContractSchema } from "./contractSummary";
 import { type MaskFinding, maskCredentials } from "./credentialMasker";
 import {
 	parseDesignerVb,
 	renderDesignerControlLines,
 } from "./designerSummary";
-import type { FileNode, LegacyTreeNode, VbprojParseResult } from "../types";
+import {
+	collectExtraRoots,
+	type ExtraRootFile,
+	type ExtraRootsResult,
+} from "./extraRootsCollector";
 
 export interface RepomixSource {
 	/** 表示名(.sln 上のプロジェクト名など)。ツリーとパスの先頭に使う */
@@ -35,6 +55,11 @@ export interface RepomixExportDeps {
 	 * 除外対象なら根拠の ignore ファイルパスを返す。未指定なら判定しない
 	 */
 	ignoreReasonFor?(absolutePath: string): string | undefined;
+	/**
+	 * extraRoots(slnmix.config.json)の走査用。ディレクトリ配下の全ファイルの
+	 * 絶対パス(再帰)。未指定なら extraRoots は扱えない(スキップ一覧に明記)
+	 */
+	listFilesRecursive?(absoluteDir: string): string[] | undefined;
 }
 
 export interface RepomixExportOptions {
@@ -59,6 +84,22 @@ export interface RepomixExportOptions {
 	 * includeSensitive が true のとき(原文が含まれるとき)は使われない
 	 */
 	uiSummary?: boolean;
+	/**
+	 * 物理パス化の基準ディレクトリ(ルート。通常は .sln のある場所)の絶対パス。
+	 * 指定すると <file path> がルート相対の物理パス(`/` 区切り)になる。
+	 * 未指定なら従来の `プロジェクト名\論理パス` 表記(後方互換 / --legacy-paths)
+	 */
+	rootDir?: string;
+	/** .vbproj に乗らない追加ディレクトリ(rootDir 必須。slnmix.config.json の extraRoots) */
+	extraRoots?: readonly ExtraRootConfig[];
+	/** contract.schema.json のルート相対パス(rootDir 必須)。あれば <contract_summary> を生成 */
+	contractSchema?: string;
+	/** 契約の正本ファイルのルート相対パス(<contract_summary> の説明に使う) */
+	contractFile?: string;
+	/** 生成コードのディレクトリ(ルート相対)。既定で除外して <contract_summary> で代替 */
+	generatedDirs?: readonly string[];
+	/** 生成コードの原文を含める(--include-generated) */
+	includeGenerated?: boolean;
 }
 
 export interface SkippedFile {
@@ -81,26 +122,13 @@ export interface RepomixExportResult {
 	maskedCount: number;
 	/** <ui_summary> として要約した Designer.vb の件数 */
 	uiSummaryCount: number;
+	/** extraRoots から含めたファイル数(fileCount にも含まれる) */
+	extraRootFileCount: number;
+	/** <contract_summary> を生成したか */
+	contractSummaryIncluded: boolean;
+	/** extraRoots の走査など、出力生成中の診断(呼び出し側が表示する) */
+	diagnostics: ParseDiagnostic[];
 }
-
-/** 内容を含めないバイナリ系拡張子(小文字) */
-const BINARY_EXTENSIONS = [
-	".dll",
-	".exe",
-	".pdb",
-	".png",
-	".jpg",
-	".jpeg",
-	".gif",
-	".bmp",
-	".ico",
-	".zip",
-	".pdf",
-	".xls",
-	".xlsx",
-	".doc",
-	".docx",
-];
 
 /**
  * ソースファイルのバイト列を文字列へデコードする。
@@ -130,8 +158,16 @@ export function decodeSourceBuffer(buffer: Buffer): string {
 	return iconv.decode(buffer, "cp932");
 }
 
-/** ツリー1ノードをインデント付きテキストにする(問題のある項目は印を付ける) */
-function renderTreeLines(node: LegacyTreeNode, depth: number, lines: string[]): void {
+/**
+ * ツリー1ノードをインデント付きテキストにする(問題のある項目は印を付ける)。
+ * annotate は行末の注記(物理パスが論理パスと異なるとき「→ 物理パス」)
+ */
+function renderTreeLines(
+	node: LegacyTreeNode,
+	depth: number,
+	lines: string[],
+	annotate?: (node: FileNode) => string | undefined,
+): void {
 	const indent = "  ".repeat(depth);
 	switch (node.type) {
 		case "solution":
@@ -141,7 +177,7 @@ function renderTreeLines(node: LegacyTreeNode, depth: number, lines: string[]): 
 			break;
 		case "file": {
 			const marker = statusMarker(node);
-			lines.push(`${indent}${node.label}${marker}`);
+			lines.push(`${indent}${node.label}${marker}${annotate?.(node) ?? ""}`);
 			break;
 		}
 		case "warning":
@@ -149,7 +185,7 @@ function renderTreeLines(node: LegacyTreeNode, depth: number, lines: string[]): 
 			break;
 	}
 	for (const child of node.children) {
-		renderTreeLines(child, depth + 1, lines);
+		renderTreeLines(child, depth + 1, lines, annotate);
 	}
 }
 
@@ -208,10 +244,8 @@ function skipReason(
 		return "Designer 関連(オプション --include-designer で含められます)";
 	}
 	const fileName = item.logicalPath.split("\\").pop() ?? "";
-	const dot = fileName.lastIndexOf(".");
-	const extension = dot >= 0 ? fileName.slice(dot).toLowerCase() : "";
-	if (BINARY_EXTENSIONS.includes(extension)) {
-		return `バイナリ拡張子(${extension})`;
+	if (isBinaryExtension(fileName)) {
+		return "バイナリ拡張子";
 	}
 	return undefined;
 }
@@ -278,6 +312,141 @@ function buildUiSummaryEntry(
 	return { entry: lines.join("\n"), findings };
 }
 
+/** 物理パス化の結果(1 ファイル分の表示情報) */
+interface PathInfo {
+	/** path 属性・スキップ一覧に使う表示パス */
+	display: string;
+	/** <file> に付ける追加属性(先頭に空白を含む。なければ空) */
+	attrs: string;
+	/** ルート相対の物理パス(`/` 区切り。ルート内のときのみ) */
+	physical?: string;
+	/** ルート外(適用ツールの範囲外) */
+	outsideRoot: boolean;
+	/** <directory_structure> の行末に併記する注記 */
+	treeNote?: string;
+}
+
+/** ドライブ絶対パス(C:\ など)または UNC(\\server\...) */
+const WINDOWS_ABSOLUTE = /^(?:[a-zA-Z]:[\\/]|\\\\)/;
+
+function toPosix(value: string): string {
+	return value.split(/[\\/]/).join("/");
+}
+
+/** absolutePath が rootDir 配下ならルート相対の `/` 区切りパス、そうでなければ undefined */
+export function relativeWithinRoot(
+	rootDir: string,
+	absolutePath: string,
+): string | undefined {
+	// Mac 等で Windows のドライブ絶対パス(別ドライブの Link)を扱うときは
+	// path.relative が誤って相対扱いするため、先に弾く
+	if (WINDOWS_ABSOLUTE.test(absolutePath) !== WINDOWS_ABSOLUTE.test(rootDir)) {
+		return undefined;
+	}
+	const rel = path.relative(rootDir, absolutePath);
+	if (
+		rel === "" ||
+		rel === ".." ||
+		rel.startsWith(`..${path.sep}`) ||
+		rel.startsWith("../") ||
+		path.isAbsolute(rel) ||
+		WINDOWS_ABSOLUTE.test(rel)
+	) {
+		return undefined;
+	}
+	return toPosix(rel);
+}
+
+function describePath(
+	source: RepomixSource,
+	node: FileNode,
+	rootDir: string | undefined,
+): PathInfo {
+	const item = node.item;
+	if (rootDir === undefined) {
+		return {
+			display: `${source.label}\\${item.logicalPath}`,
+			attrs: "",
+			outsideRoot: false,
+		};
+	}
+	const logicalPosix = `${source.label}/${toPosix(item.logicalPath)}`;
+	if (item.sourcePath === undefined) {
+		return { display: logicalPosix, attrs: "", outsideRoot: false };
+	}
+	const physical = relativeWithinRoot(rootDir, item.sourcePath);
+	if (physical === undefined) {
+		const physicalPosix = toPosix(item.sourcePath);
+		return {
+			display: logicalPosix,
+			attrs: ` project="${escapeAttribute(source.label)}" physical="${escapeAttribute(physicalPosix)}" outside_root="true"`,
+			outsideRoot: true,
+			treeNote: ` → ${physicalPosix}(ルート外)`,
+		};
+	}
+	if (physical.toLowerCase() === logicalPosix.toLowerCase()) {
+		return { display: physical, attrs: "", physical, outsideRoot: false };
+	}
+	return {
+		display: physical,
+		attrs: ` project="${escapeAttribute(source.label)}" logical="${escapeAttribute(item.logicalPath)}"`,
+		physical,
+		outsideRoot: false,
+		treeNote: ` → ${physical}`,
+	};
+}
+
+/** relativePosix が generatedDirs のいずれかの配下なら、そのディレクトリを返す */
+function generatedDirOf(
+	relativePosix: string | undefined,
+	generatedDirs: readonly string[],
+): string | undefined {
+	if (relativePosix === undefined) {
+		return undefined;
+	}
+	const lower = relativePosix.toLowerCase();
+	return generatedDirs.find((dir) => lower.startsWith(`${dir.toLowerCase()}/`));
+}
+
+/** extraRoots のファイルを [kind] path/ 配下のフォルダツリーとして描く */
+function renderExtraRootTree(
+	root: ExtraRootConfig,
+	files: readonly ExtraRootFile[],
+	lines: string[],
+): void {
+	interface DirNode {
+		dirs: Map<string, DirNode>;
+		files: string[];
+	}
+	const top: DirNode = { dirs: new Map(), files: [] };
+	for (const file of files) {
+		const segments = file.relativePath.slice(root.path.length + 1).split("/");
+		let cursor = top;
+		for (const segment of segments.slice(0, -1)) {
+			let next = cursor.dirs.get(segment);
+			if (next === undefined) {
+				next = { dirs: new Map(), files: [] };
+				cursor.dirs.set(segment, next);
+			}
+			cursor = next;
+		}
+		cursor.files.push(segments[segments.length - 1]);
+	}
+	const byName = (a: string, b: string) => a.toLowerCase().localeCompare(b.toLowerCase());
+	const render = (node: DirNode, depth: number): void => {
+		const indent = "  ".repeat(depth);
+		for (const name of [...node.dirs.keys()].sort(byName)) {
+			lines.push(`${indent}${name}/`);
+			render(node.dirs.get(name) as DirNode, depth + 1);
+		}
+		for (const name of [...node.files].sort(byName)) {
+			lines.push(`${indent}${name}`);
+		}
+	};
+	lines.push(`[${root.kind}] ${root.path}/`);
+	render(top, 1);
+}
+
 /**
  * Repomix 形式のテキストを生成する。
  * @param title 出力対象の表示名(Sample.sln など)
@@ -292,23 +461,32 @@ export function buildRepomixOutput(
 	const fileEntries: string[] = [];
 	const skipped: SkippedFile[] = [];
 	const maskedFiles: MaskedFile[] = [];
+	const diagnostics: ParseDiagnostic[] = [];
+	const outsideRootPaths: string[] = [];
 	let fileCount = 0;
 	let totalChars = 0;
 	let uiSummaryCount = 0;
+	let extraRootFileCount = 0;
 	// 述語指定時は「含めなかった Designer」が残るので要約は有効のまま
 	const uiSummaryEnabled =
 		(options.uiSummary ?? true) && options.includeSensitive !== true;
 	const strictMask = options.strictMask ?? true;
+	const rootDir = options.rootDir;
+	const generatedDirs = options.generatedDirs ?? [];
+	const includeGenerated = options.includeGenerated ?? false;
 
 	for (const source of sources) {
 		const tree = buildLogicalTree(source.parseResult);
 		tree.root.label = source.label;
-		renderTreeLines(tree.root, 0, treeLines);
+		renderTreeLines(tree.root, 0, treeLines, (node) =>
+			describePath(source, node, rootDir).treeNote,
+		);
 
 		const fileNodes: FileNode[] = [];
 		collectFileNodes(tree.root, fileNodes);
 		for (const node of fileNodes) {
-			const displayPath = `${source.label}\\${node.item.logicalPath}`;
+			const info = describePath(source, node, rootDir);
+			const displayPath = info.display;
 			const reason = skipReason(node, options);
 			if (reason !== undefined) {
 				const uiSummaryEntry = uiSummaryEnabled
@@ -338,6 +516,16 @@ export function buildRepomixOutput(
 					skipped.push({ path: displayPath, reason });
 				}
 				continue;
+			}
+			if (!includeGenerated) {
+				const generatedDir = generatedDirOf(info.physical, generatedDirs);
+				if (generatedDir !== undefined) {
+					skipped.push({
+						path: displayPath,
+						reason: `生成コード(${generatedDir}/ 配下。<contract_summary> で代替。オプション --include-generated で含められます)`,
+					});
+					continue;
+				}
 			}
 			// skipReason 通過時点で sourcePath は解決済み
 			const sourcePath = node.item.sourcePath as string;
@@ -369,13 +557,135 @@ export function buildRepomixOutput(
 				node.item.condition === undefined
 					? ""
 					: ` condition="${escapeAttribute(node.item.condition)}"`;
+			if (info.outsideRoot) {
+				outsideRootPaths.push(displayPath);
+			}
 			fileEntries.push(
-				`<file path="${escapeAttribute(displayPath)}"${conditionAttr}>\n${content}\n</file>`,
+				`<file path="${escapeAttribute(displayPath)}"${info.attrs}${conditionAttr}>\n${content}\n</file>`,
 			);
 			fileCount += 1;
 			totalChars += content.length;
 		}
 	}
+
+	// ---- 契約サマリー(contract.schema.json → <contract_summary>) ----
+	let contractEntry: string | undefined;
+	if (options.contractSchema !== undefined && rootDir !== undefined) {
+		const schemaPath = options.contractSchema;
+		const text = deps.readTextFile(path.resolve(rootDir, ...schemaPath.split("/")));
+		if (text === undefined) {
+			skipped.push({
+				path: schemaPath,
+				reason: "契約スキーマを読み込めません(<contract_summary> なし)",
+			});
+		} else {
+			const summary = summarizeContractSchema(text);
+			if (!summary.ok) {
+				skipped.push({
+					path: schemaPath,
+					reason: `契約の要約に失敗(${summary.reason})。原文の契約ファイルだけを出力`,
+				});
+			} else {
+				const generatedNote =
+					generatedDirs.length > 0 && !includeGenerated
+						? `生成コード ${generatedDirs.map((d) => `${d}/`).join("、")} は除外。`
+						: "";
+				const contractFile = options.contractFile ?? "契約ファイル(contract.ts)";
+				contractEntry = [
+					`<contract_summary path="${escapeAttribute(schemaPath)}">`,
+					`契約から生成された API の要約(${generatedNote}契約の正本は ${contractFile}):`,
+					...summary.lines,
+					"</contract_summary>",
+				].join("\n");
+			}
+		}
+	}
+
+	// ---- extraRoots(.vbproj に乗らない web / 契約ディレクトリ) ----
+	const extraRoots = options.extraRoots ?? [];
+	let extra: ExtraRootsResult | undefined;
+	if (extraRoots.length > 0) {
+		if (rootDir === undefined) {
+			diagnostics.push({
+				severity: "warning",
+				message: "extraRoots は物理パス化(rootDir)が有効なときだけ扱えます(--legacy-paths では無視)",
+			});
+		} else if (deps.listFilesRecursive === undefined) {
+			diagnostics.push({
+				severity: "warning",
+				message: "extraRoots を走査する手段がないため無視しました",
+			});
+		} else {
+			extra = collectExtraRoots(rootDir, extraRoots, {
+				listFilesRecursive: deps.listFilesRecursive,
+				ignoreReasonFor: deps.ignoreReasonFor,
+			});
+			diagnostics.push(...extra.diagnostics);
+			skipped.push(
+				...extra.skipped.map((s) => ({ path: s.relativePath, reason: s.reason })),
+			);
+		}
+	}
+	let contractPlaced = false;
+	if (extra !== undefined) {
+		for (const root of extraRoots) {
+			const files = extra.files.filter((f) => f.rootPath === root.path && f.kind === root.kind);
+			renderExtraRootTree(root, files, treeLines);
+			for (const file of files) {
+				if (
+					contractEntry !== undefined &&
+					file.relativePath.toLowerCase() === options.contractSchema?.toLowerCase()
+				) {
+					skipped.push({
+						path: file.relativePath,
+						reason: "契約スキーマ(<contract_summary> に要約済み)",
+					});
+					continue;
+				}
+				if (!includeGenerated) {
+					const generatedDir = generatedDirOf(file.relativePath, generatedDirs);
+					if (generatedDir !== undefined) {
+						skipped.push({
+							path: file.relativePath,
+							reason: `生成コード(${generatedDir}/ 配下。<contract_summary> で代替。オプション --include-generated で含められます)`,
+						});
+						continue;
+					}
+				}
+				const rawContent = deps.readTextFile(file.absolutePath);
+				if (rawContent === undefined) {
+					skipped.push({ path: file.relativePath, reason: "読み込みに失敗しました" });
+					continue;
+				}
+				let content = rawContent;
+				if (options.maskCredentials) {
+					const masked = maskCredentials(rawContent, { vbSource: false, strict: strictMask });
+					content = masked.content;
+					if (masked.findings.length > 0) {
+						maskedFiles.push({ path: file.relativePath, findings: masked.findings });
+					}
+				}
+				fileEntries.push(
+					`<file path="${escapeAttribute(file.relativePath)}" root="${escapeAttribute(file.kind)}">\n${content}\n</file>`,
+				);
+				fileCount += 1;
+				extraRootFileCount += 1;
+				totalChars += content.length;
+			}
+			// 契約ファイルの直後に要約を置く(ui_summary と同じ発想)
+			if (root.kind === "contract" && contractEntry !== undefined && !contractPlaced) {
+				fileEntries.push(contractEntry);
+				totalChars += contractEntry.length;
+				contractPlaced = true;
+			}
+		}
+	}
+	if (contractEntry !== undefined && !contractPlaced) {
+		fileEntries.push(contractEntry);
+		totalChars += contractEntry.length;
+		contractPlaced = true;
+	}
+
 	const maskedCount = maskedFiles.reduce(
 		(sum, file) => sum + file.findings.length,
 		0,
@@ -402,6 +712,7 @@ export function buildRepomixOutput(
 	const sdkExpandedLabels = sources
 		.filter((source) => source.parseResult.defaultCompileGlobExpanded)
 		.map((source) => source.label);
+	const rootName = rootDir === undefined ? undefined : path.basename(rootDir);
 
 	const content = [
 		`このファイルは slnmix が「${title}」の論理構成(.sln / .vbproj)に基づき、ソースコードを 1 ファイルにまとめたものです(Repomix 形式)。`,
@@ -409,10 +720,23 @@ export function buildRepomixOutput(
 		"<file_summary>",
 		"<purpose>",
 		"AI にコードベース全体を渡すためのパック済み表現。",
-		"パスは物理配置ではなく Visual Studio の論理構成(Link 解決済み)に基づく。",
+		rootDir === undefined
+			? "パスは物理配置ではなく Visual Studio の論理構成(Link 解決済み)に基づく。"
+			: "<directory_structure> は Visual Studio の論理構成(Link 解決済み)、<file> の path 属性は物理配置に基づく。",
 		"AI がコードを理解し質問に回答するための入力であり、このままコンパイル・実行できる形であることは保証しない。",
 		"</purpose>",
 		"<notes>",
+		...(rootDir === undefined
+			? []
+			: [
+					`- <file> の path 属性はルート「${rootName}」からの相対物理パス(/ 区切り)。changes.md のパスはこの path をそのまま使うこと。新規ファイルも同じ規則で、置きたいプロジェクトの物理フォルダ配下に書くこと`,
+					"- 論理パス(Visual Studio 上の見え方)と物理パスが異なるファイル(Link)は logical / project 属性を持ち、<directory_structure> では「→ 物理パス」を併記",
+					...(outsideRootPaths.length > 0
+						? [
+								`- ルート外のファイル(適用ツールの範囲外。物理パスは physical 属性): ${outsideRootPaths.join(", ")}`,
+							]
+						: []),
+				]),
 		"- 文字コードは UTF-8 に統一済み(元ファイルの Shift_JIS 等は自動変換)",
 		"- EmbeddedResource(.resx)は含まれない",
 		options.includeSensitive === true
@@ -443,6 +767,18 @@ export function buildRepomixOutput(
 		...(sdkExpandedLabels.length > 0
 			? [
 					`- SDK スタイルのプロジェクト(${sdkExpandedLabels.join(", ")})は Compile を明示列挙しないため、既定の Compile グロブ(**/*.vb)を展開した(bin/ obj/ ドットフォルダ・*.user・<Compile Remove> は除外)。MSBuild の完全評価ではない`,
+				]
+			: []),
+		...(extra !== undefined
+			? [
+					`- [${extraRoots.map((r) => r.kind).join("] [")}] のグループは .vbproj に乗らない追加ディレクトリ(slnmix.config.json の extraRoots。<file> の root 属性)。認証情報マスクは VB 側と同様に適用済み`,
+				]
+			: []),
+		...(generatedDirs.length > 0
+			? [
+					includeGenerated
+						? `- 生成コード(${generatedDirs.map((d) => `${d}/`).join("、")})の原文を含む(オプション --include-generated)。生成物は変更対象にせず、契約の変更として提案すること`
+						: `- 生成コード(${generatedDirs.map((d) => `${d}/`).join("、")})は除外し、契約の要約 <contract_summary> で代替。生成物は変更対象にせず、契約の変更として提案すること`,
 				]
 			: []),
 		"- 除外・未解決のファイルは <skipped_files> を参照",
@@ -476,5 +812,8 @@ export function buildRepomixOutput(
 		maskedFiles,
 		maskedCount,
 		uiSummaryCount,
+		extraRootFileCount,
+		contractSummaryIncluded: contractPlaced,
+		diagnostics,
 	};
 }

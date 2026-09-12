@@ -33,6 +33,11 @@ DependentUpon 解決済み)に基づいてエクスポートします。
 - 除外・未解決のファイルは `<skipped_files>` に明記(黙って捨てない)
 - SDK スタイル `.vbproj`(`<Project Sdk="...">`)は既定の Compile グロブ
   `**/*.vb` を展開して扱い、展開したことを出力に明記(下記)
+- `<file path>` は**ルート相対の物理パス・`/` 区切り**(petari がそのまま
+  使える形。Link は `logical` 属性で論理パスを併記。下記)
+- `slnmix.config.json` の `extraRoots` で `.vbproj` に乗らない web / 契約
+  ディレクトリを同じパックに入れられる(WinForms + WebView2 + React の
+  ハイブリッド構成向け。生成コードは除外して `<contract_summary>` で代替。下記)
 - `.sln` と同じフォルダに `.sln` から参照されていない `.vbproj` があれば警告
   (`.sln` だけが古い場合のエクスポート漏れに気付ける)
 - 入力と同じフォルダの `protocol.md`([petari](https://github.com/ishibashi0112/petari)
@@ -99,6 +104,8 @@ npx slnmix Sub\Project.vbproj --stdout
       --no-mask           認証情報の自動マスクを無効化
       --no-strict-mask    高エントロピー文字列の機械的マスクを無効化
       --no-gitignore      .gitignore / .repomixignore による除外を無効化
+      --legacy-paths      <file path> を旧形式(プロジェクト名\論理パス)にする
+      --include-generated 生成コード(generatedDirs)の原文を含める
       --instruction-file <path>
                           出力末尾に連結する規約文ファイルを明示指定
                           (既定: 入力と同じ場所の protocol.md を自動検出)
@@ -114,6 +121,81 @@ npx slnmix Sub\Project.vbproj --stdout
       --print-procedure   内蔵の作業手順文を標準出力に書いて終了
   -v, --version           バージョン表示
   -h, --help              ヘルプ
+```
+
+## ファイルパスの規則(物理パス化)
+
+`<file path="...">` は**ルート**(入力の `.sln` / `.vbproj` があるフォルダ)からの
+相対物理パスで、`/` 区切りです。AI が changes.md に書くパスをこの `path` と
+一致させることで、[petari](https://github.com/ishibashi0112/petari) が
+パス変換なしにそのまま適用できます(petari のプロジェクトルートと slnmix の
+ルートを同じ場所にしてください。通常は `.sln` のあるリポジトリ直下です)。
+
+```xml
+<file path="App/Forms/OrderForm.vb">                                   ← 物理パス = 論理パス
+<file path="Shared/Util.vb" project="App" logical="Common\Util.vb">    ← Link(論理パスと異なる)
+<file path="Basic/Module1.vb" project="Basic" physical="D:/Src/Basic/Module1.vb" outside_root="true">
+                                                                       ← ルート外(適用ツールの範囲外)
+```
+
+- `<directory_structure>` は従来どおり Visual Studio の論理ツリー(人が読む用)。
+  物理パスが異なるファイルは行末に `→ 物理パス` を併記
+- ルートの外にあるファイル(別ドライブの Link など)は論理パスを `path` にし、
+  `physical` 属性に物理パスを付けて `<file_summary>` に「適用ツールの範囲外」と
+  明記
+- `<file_summary>` に規則を明記し、新規ファイルも同じ規則で「置きたい
+  プロジェクトの物理フォルダ配下」に書くよう AI に指示
+- v0.12.0 で既定を変更しました(後方互換を破る変更)。旧形式
+  `プロジェクト名\論理パス` が必要な場合は `--legacy-paths` を指定してください
+  (1〜2 バージョン残して廃止予定)
+
+## ハイブリッド構成(`slnmix.config.json`)
+
+WinForms + WebView2 + React([webview2-bridge](https://github.com/ishibashi0112/webview2-bridge))
+のように `.vbproj` に乗らない web 側・契約側のディレクトリがある場合、ルート直下に
+`slnmix.config.json` を置くと同じパックに入ります。**なくても動きます**
+(`slnmix init` はありません)。
+
+```jsonc
+{
+  "extraRoots": [
+    { "path": "apps/web", "kind": "web" },
+    { "path": "contract", "kind": "contract", "include": ["contract.ts", "package.json"] }
+  ],
+  // 以下は同じ場所に webview2-bridge.gen.json があれば自動検出(明示すれば上書き)
+  "contractSchema": "contract/contract.schema.json",
+  "generatedDirs": ["dotnet/App.Contract/Generated", "apps/web/src/generated"]
+}
+```
+
+- `extraRoots[].path`: ルート相対。**宣言されたディレクトリだけ**走査します
+  (ディレクトリ走査をしない原則の、明示的でスコープの狭い例外)
+- `include` の既定: `kind: web` は `**/*.{ts,tsx,js,jsx,css,json,html}`、
+  `kind: contract` は `**/*.ts`、それ以外は `**/*`。`exclude` で追加除外
+- `include` に関わらず常に除外: `node_modules/`、`dist/`、`build/`、`.vite/`、
+  `*.map`、`.env*`、`.gitignore` / `.repomixignore` に一致するもの、バイナリ拡張子
+- 出力では `<directory_structure>` に `[web] apps/web/` のようにグループ表示し、
+  `<file path="apps/web/src/App.tsx" root="web">` の `root` 属性で区別します
+- **認証情報マスクは web 側にも同じように効きます**(厳格モードでは API キー
+  らしき高エントロピー値も `[MASKED]`)。`.env*` は既定で除外。VB 側で守っている
+  安全性が web を足した瞬間に落ちないようにしています。ただし機械判定なので
+  共有前の目視確認は引き続き推奨します
+- `generatedDirs` 配下(webview2-bridge の生成コード)は既定で除外し、
+  `contractSchema`(`contract.schema.json`)から生成した **`<contract_summary>`**
+  (メソッド・イベント・DTO の一覧)で代替します。原文が必要なら
+  `--include-generated`。スキーマの形式が未知(`contractVersion` が対応外)なら
+  要約せず `<skipped_files>` に理由を書き、原文の `contract.ts` だけを出します
+
+```xml
+<contract_summary path="contract/contract.schema.json">
+契約から生成された API の要約(生成コード dotnet/App.Contract/Generated/、apps/web/src/generated/ は除外。契約の正本は contract/contract.ts):
+methods:
+- parts.search(input: { keyword: string; limit?: integer }) -> { items: Part[] }
+events:
+- progress(payload: { percent: number; message?: string })
+types:
+- Part { partNo: string; name: string; qty: integer; updatedAt: string(ISO 8601) }
+</contract_summary>
 ```
 
 ## SDK スタイル .vbproj

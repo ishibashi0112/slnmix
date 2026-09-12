@@ -10,6 +10,7 @@ import * as iconv from "iconv-lite";
 import {
 	buildRepomixOutput,
 	decodeSourceBuffer,
+	relativeWithinRoot,
 	type RepomixSource,
 } from "../services/repomixExporter";
 import type { VbprojParseResult } from "../types";
@@ -462,5 +463,244 @@ suite("repomixExporter: SDK スタイルの既定グロブ展開の宣言", () =
 			{ includeSensitive: false, maskCredentials: false },
 		);
 		assert.ok(!result.content.includes("SDK スタイルのプロジェクト"));
+	});
+});
+
+// ---------------------------------------------------------------------------
+// フェーズ 3: 物理パス化・extraRoots・生成コード除外・<contract_summary>
+// ---------------------------------------------------------------------------
+
+function listFilesRecursiveReal(dir: string): string[] {
+	const results: string[] = [];
+	for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+		const full = path.join(dir, entry.name);
+		if (entry.isDirectory()) {
+			results.push(...listFilesRecursiveReal(full));
+		} else if (entry.isFile()) {
+			results.push(full);
+		}
+	}
+	return results;
+}
+
+const realDeps = {
+	readTextFile: (absolutePath: string): string | undefined => {
+		try {
+			return fs.readFileSync(absolutePath, "utf8");
+		} catch {
+			return undefined;
+		}
+	},
+	listFilesRecursive: listFilesRecursiveReal,
+};
+
+function parseReal(relativeVbproj: string): VbprojParseResult {
+	const projectPath = path.join(FIXTURES_ROOT, ...relativeVbproj.split("/"));
+	return parseVbproj(fs.readFileSync(projectPath, "utf8"), projectPath, {
+		fileExists: (p) => fs.existsSync(p),
+		listFilesRecursive: listFilesRecursiveReal,
+	});
+}
+
+suite("repomixExporter: 物理パス化(hybrid fixture)", () => {
+	const rootDir = path.join(FIXTURES_ROOT, "hybrid");
+	const sources: RepomixSource[] = [
+		{ label: "App", parseResult: parseReal("hybrid/App/App.vbproj") },
+		{ label: "App.Contract", parseResult: parseReal("hybrid/dotnet/App.Contract/App.Contract.vbproj") },
+	];
+	const extraRoots = [
+		{ path: "apps/web", kind: "web", include: ["**/*.{ts,tsx,js,jsx,css,json,html}"], exclude: [] },
+		{ path: "contract", kind: "contract", include: ["contract.ts", "package.json"], exclude: [] },
+	];
+	const generatedDirs = ["dotnet/App.Contract/Generated", "apps/web/src/generated"];
+	const result = buildRepomixOutput("Hybrid.sln", sources, realDeps, {
+		includeSensitive: false,
+		maskCredentials: true,
+		rootDir,
+		extraRoots,
+		contractSchema: "contract/contract.schema.json",
+		contractFile: "contract/contract.ts",
+		generatedDirs,
+	});
+
+	test("path 属性はルート相対の物理パス(/ 区切り)。プロジェクト名の接頭辞は付かない", () => {
+		assert.ok(result.content.includes('<file path="App/Forms/MainForm.vb">'));
+		assert.ok(!result.content.includes('path="App\\Forms'));
+	});
+
+	test("Link(論理 ≠ 物理)は logical / project 属性を持ち、ツリーに → 物理パスを併記", () => {
+		assert.ok(
+			result.content.includes(
+				'<file path="Shared/Util.vb" project="App" logical="Common\\Util.vb">',
+			),
+		);
+		assert.ok(result.content.includes("    Util.vb → Shared/Util.vb"));
+		assert.ok(!result.content.includes("MainForm.vb →"));
+	});
+
+	test("プロジェクト名 ≠ 物理フォルダ名(dotnet/App.Contract)も物理パスになる", () => {
+		assert.ok(
+			result.content.includes(
+				'<file path="dotnet/App.Contract/PartsService.vb" project="App.Contract" logical="PartsService.vb">',
+			),
+		);
+	});
+
+	test("file_summary に path 規則と新規ファイルの置き場所の規則が書かれる", () => {
+		assert.ok(result.content.includes("ルート「hybrid」からの相対物理パス(/ 区切り)"));
+		assert.ok(result.content.includes("changes.md のパスはこの path をそのまま使うこと"));
+		assert.ok(result.content.includes("<directory_structure> は Visual Studio の論理構成"));
+	});
+
+	test("extraRoots のファイルは root 属性付きで含まれ、ツリーに [kind] path/ でグループ表示", () => {
+		assert.ok(result.content.includes('<file path="apps/web/src/App.tsx" root="web">'));
+		assert.ok(result.content.includes('<file path="contract/contract.ts" root="contract">'));
+		assert.ok(result.content.includes("[web] apps/web/\n  src/\n"));
+		assert.ok(result.content.includes("[contract] contract/\n  contract.ts\n  package.json"));
+		assert.strictEqual(result.extraRootFileCount, 8);
+		assert.strictEqual(result.fileCount, 3 + 8);
+	});
+
+	test(".env と include 対象外(README.md)は含まれない", () => {
+		assert.ok(!result.content.includes('path="apps/web/.env"'));
+		assert.ok(!result.content.includes("dummy-secret-for-fixture"));
+		assert.ok(!result.content.includes("apps/web/README.md"));
+	});
+
+	test("web 側にも認証情報マスクが効く(値だけを置換し、代入の形は壊さない)", () => {
+		assert.ok(result.content.includes('const API_KEY = "[MASKED]";'));
+		assert.ok(!result.content.includes("Zq7Vx2Lm9Rt4"));
+		assert.ok(result.maskedFiles.some((f) => f.path === "apps/web/src/api.ts"));
+	});
+
+	test("generatedDirs 配下は VB 側・web 側とも除外され、理由が明記される", () => {
+		assert.ok(!result.content.includes('path="dotnet/App.Contract/Generated/Contract.g.vb"'));
+		assert.ok(!result.content.includes('path="apps/web/src/generated/contract.ts"'));
+		assert.ok(
+			result.skipped.some(
+				(s) =>
+					s.path === "dotnet/App.Contract/Generated/Contract.g.vb" &&
+					s.reason.includes("生成コード") &&
+					s.reason.includes("--include-generated"),
+			),
+		);
+		assert.ok(result.skipped.some((s) => s.path === "apps/web/src/generated/contract.ts"));
+	});
+
+	test("<contract_summary> が契約ルートの直後に置かれ、内容が要約されている", () => {
+		assert.ok(result.contractSummaryIncluded);
+		const contractIndex = result.content.indexOf('<file path="contract/package.json" root="contract">');
+		const summaryIndex = result.content.indexOf('<contract_summary path="contract/contract.schema.json">');
+		assert.ok(contractIndex >= 0 && summaryIndex > contractIndex);
+		assert.ok(
+			result.content.includes(
+				"契約から生成された API の要約(生成コード dotnet/App.Contract/Generated/、apps/web/src/generated/ は除外。契約の正本は contract/contract.ts):",
+			),
+		);
+		assert.ok(
+			result.content.includes(
+				"- parts.search(input: { keyword: string; limit?: integer }) -> { items: Part[] }",
+			),
+		);
+		assert.ok(result.content.includes("</contract_summary>\n</files>"));
+	});
+
+	test("includeGenerated で生成コードの原文が含まれる", () => {
+		const withGenerated = buildRepomixOutput("Hybrid.sln", sources, realDeps, {
+			includeSensitive: false,
+			maskCredentials: false,
+			rootDir,
+			extraRoots,
+			generatedDirs,
+			includeGenerated: true,
+		});
+		assert.ok(
+			withGenerated.content.includes(
+				'<file path="dotnet/App.Contract/Generated/Contract.g.vb" project="App.Contract" logical="Generated\\Contract.g.vb">',
+			),
+		);
+		assert.ok(withGenerated.content.includes('<file path="apps/web/src/generated/contract.ts" root="web">'));
+		assert.ok(withGenerated.content.includes("の原文を含む(オプション --include-generated)"));
+	});
+
+	test("契約スキーマが未知の形式なら要約せず、理由を skipped に書いて続行する", () => {
+		const deps = {
+			...realDeps,
+			readTextFile: (p: string) =>
+				p.endsWith("contract.schema.json")
+					? JSON.stringify({ contractVersion: 99 })
+					: realDeps.readTextFile(p),
+		};
+		const unknown = buildRepomixOutput("Hybrid.sln", sources, deps, {
+			includeSensitive: false,
+			maskCredentials: false,
+			rootDir,
+			extraRoots,
+			contractSchema: "contract/contract.schema.json",
+		});
+		assert.ok(!unknown.contractSummaryIncluded);
+		assert.ok(!unknown.content.includes("<contract_summary"));
+		assert.ok(
+			unknown.skipped.some(
+				(s) => s.path === "contract/contract.schema.json" && s.reason.includes("contractVersion: 99"),
+			),
+		);
+		assert.ok(unknown.content.includes('<file path="contract/contract.ts" root="contract">'));
+	});
+
+	test("rootDir なし(--legacy-paths)なら従来の表記になり、extraRoots は警告して無視", () => {
+		const legacy = buildRepomixOutput("Hybrid.sln", sources, realDeps, {
+			includeSensitive: false,
+			maskCredentials: false,
+			extraRoots,
+		});
+		assert.ok(legacy.content.includes('<file path="App\\Forms\\MainForm.vb">'));
+		assert.ok(legacy.content.includes('<file path="App\\Common\\Util.vb">'));
+		assert.ok(!legacy.content.includes('root="web"'));
+		assert.ok(legacy.content.includes("パスは物理配置ではなく Visual Studio の論理構成"));
+		assert.ok(legacy.diagnostics.some((d) => d.message.includes("--legacy-paths")));
+	});
+});
+
+suite("repomixExporter: ルート外のファイル(適用ツールの範囲外)", () => {
+	// solution fixture の各プロジェクトは ..\basic 等、.sln のディレクトリの外にある
+	const rootDir = path.join(FIXTURES_ROOT, "solution");
+	const result = buildRepomixOutput(
+		"Sample.sln",
+		[{ label: "Basic", parseResult: parseReal("basic/Basic.vbproj") }],
+		realDeps,
+		{ includeSensitive: false, maskCredentials: false, rootDir },
+	);
+
+	test("path は論理パス(プロジェクト名/論理パス)のまま、physical / outside_root 属性で物理パスを示す", () => {
+		const physical = path.join(FIXTURES_ROOT, "basic", "Module1.vb").split(path.sep).join("/");
+		assert.ok(
+			result.content.includes(
+				`<file path="Basic/Module1.vb" project="Basic" physical="${physical}" outside_root="true">`,
+			),
+		);
+	});
+
+	test("file_summary にルート外のファイル一覧が明記される", () => {
+		assert.ok(result.content.includes("- ルート外のファイル(適用ツールの範囲外。物理パスは physical 属性): "));
+		assert.ok(result.content.includes("Basic/Module1.vb"));
+	});
+
+	test("ツリーには → 物理パス(ルート外) を併記する", () => {
+		assert.ok(/Module1\.vb → .*Module1\.vb\(ルート外\)/.test(result.content));
+	});
+});
+
+suite("repomixExporter: relativeWithinRoot", () => {
+	test("配下なら / 区切りの相対パス、外なら undefined", () => {
+		const root = path.resolve("/work/repo");
+		assert.strictEqual(relativeWithinRoot(root, path.join(root, "a", "b.vb")), "a/b.vb");
+		assert.strictEqual(relativeWithinRoot(root, path.resolve("/work/other/b.vb")), undefined);
+		assert.strictEqual(relativeWithinRoot(root, root), undefined);
+	});
+
+	test("Windows のドライブ絶対パス(別ドライブの Link)は実行環境によらず外と判定する", () => {
+		assert.strictEqual(relativeWithinRoot(path.resolve("/work/repo"), "D:\\Shared\\External.vb"), undefined);
+		assert.strictEqual(relativeWithinRoot(path.resolve("/work/repo"), "\\\\server\\share\\x.vb"), undefined);
 	});
 });

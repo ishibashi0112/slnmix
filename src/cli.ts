@@ -30,6 +30,7 @@ import {
 	resolveTask,
 } from "./procedureFile";
 import { GitignoreEvaluator } from "./services/gitignoreService";
+import { loadSlnmixConfig } from "./slnmixConfig";
 import {
 	buildRepomixOutput,
 	decodeSourceBuffer,
@@ -62,6 +63,13 @@ const USAGE = `slnmix — .sln / .vbproj の論理構成に基づく repomix 互
       --no-strict-mask  高エントロピー文字列(ランダム英数字列)の機械的マスクを
                         無効化(既定は厳格モード。変数名等から判定するマスクは残る)
       --no-gitignore    .gitignore / .repomixignore による除外を無効化
+      --legacy-paths    <file path> を旧形式(プロジェクト名\論理パス)にする
+                        (既定はルート相対の物理パス・/ 区切り。petari がそのまま
+                        使える形。旧形式は将来のバージョンで廃止予定)
+      --include-generated
+                        生成コード(slnmix.config.json / webview2-bridge.gen.json の
+                        generatedDirs)の原文を含める(既定は除外し <contract_summary>
+                        で代替)
       --instruction-file <path>
                         出力末尾に <instruction> として連結する規約文ファイルを
                         明示指定(既定: 入力と同じ場所の protocol.md を自動検出。
@@ -227,6 +235,8 @@ function main(): number {
 			"no-mask": { type: "boolean", default: false },
 			"no-strict-mask": { type: "boolean", default: false },
 			"no-gitignore": { type: "boolean", default: false },
+			"legacy-paths": { type: "boolean", default: false },
+			"include-generated": { type: "boolean", default: false },
 			"instruction-file": { type: "string" },
 			task: { type: "string" },
 			mode: { type: "string", default: DEFAULT_PROCEDURE_MODE },
@@ -330,6 +340,23 @@ function main(): number {
 		}
 	}
 
+	// ルート = 入力(.sln / .vbproj)のあるディレクトリ。物理パス・設定ファイル・
+	// protocol.md / procedure.md・.gitignore の基準をすべてここに揃える
+	const rootDir = path.dirname(targetPath);
+	const configResult = loadSlnmixConfig(rootDir, { readTextFile: readSourceTextFile });
+	printDiagnostics("slnmix.config.json", configResult.diagnostics);
+	const config = configResult.config;
+	if (config.sources.length > 0) {
+		const parts = [`extraRoots ${config.extraRoots.length} 件`];
+		if (config.contractSchema !== undefined) {
+			parts.push(`契約スキーマ ${config.contractSchema}`);
+		}
+		if (config.generatedDirs.length > 0) {
+			parts.push(`生成コード ${config.generatedDirs.length} ディレクトリ`);
+		}
+		console.error(`設定: ${config.sources.join(", ")}(${parts.join(" / ")})`);
+	}
+
 	// petari 等の規約文(protocol.md)を出力末尾へ連結する(なければ従来どおり)
 	const instruction = resolveInstructionFile(
 		values["instruction-file"],
@@ -394,14 +421,22 @@ function main(): number {
 			ignoreReasonFor: values["no-gitignore"]
 				? undefined
 				: (absolutePath) => gitignore.ignoreReasonFor(absolutePath),
+			listFilesRecursive: FS_DEPS.listFilesRecursive,
 		},
 		{
 			includeSensitive,
 			maskCredentials: !values["no-mask"],
 			strictMask: !values["no-strict-mask"],
 			uiSummary: !values["no-ui-summary"],
+			rootDir: values["legacy-paths"] ? undefined : rootDir,
+			extraRoots: config.extraRoots,
+			contractSchema: config.contractSchema,
+			contractFile: config.contractFile,
+			generatedDirs: config.generatedDirs,
+			includeGenerated: values["include-generated"],
 		},
 	);
+	printDiagnostics("出力", output.diagnostics);
 
 	// 末尾に <task> / <plan> / <procedure> / <instruction>、先頭にリマインダの
 	// サンドイッチ配置(チャットの要約処理で末尾が落ちても冒頭が末尾へ誘導する)
@@ -448,11 +483,16 @@ function main(): number {
 		: ` / 認証情報マスク ${output.maskedCount} 件`;
 	const uiSummaryNote =
 		output.uiSummaryCount > 0 ? ` / UI サマリー ${output.uiSummaryCount} 件` : "";
+	const extraNote =
+		output.extraRootFileCount > 0
+			? ` / 追加ルート ${output.extraRootFileCount} 件`
+			: "";
+	const contractNote = output.contractSummaryIncluded ? " / 契約サマリーあり" : "";
 	console.error(
 		`${output.fileCount} ファイル / 約 ${Math.max(
 			1,
 			Math.round(output.totalChars / 1000),
-		)}K 文字(スキップ ${output.skipped.length} 件${maskNote}${uiSummaryNote})`,
+		)}K 文字(スキップ ${output.skipped.length} 件${maskNote}${uiSummaryNote}${extraNote}${contractNote})`,
 	);
 	return 0;
 }
