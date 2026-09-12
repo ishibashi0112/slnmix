@@ -33,8 +33,13 @@ workbench は 2026-09 時点で凍結(新機能は追わない)。
 - `src/instructionFile.ts` — petari 規約文(protocol.md)の `<instruction>` 連結
 - `src/procedureFile.ts` / `src/assets/procedure.ts` — 作業手順文
   `<procedure>`(内蔵既定文 or procedure.md)、`--task` / `--plan` の解決、
-  先頭リマインダ。内蔵文を変えたら `PROCEDURE_VERSION` を上げ
+  先頭リマインダ、チャット本文に貼る指示テキスト(`buildPromptText` →
+  `<出力名>.prompt.md`)。内蔵文を変えたら `PROCEDURE_VERSION` を上げ
   `test-fixtures/procedure/` のスナップショットを更新する
+- M365 Copilot Chat の実測(2026-09-12、設計書 §15.1): 添付ファイル内の指示は
+  「埋め込み指示」として意図的に無視され、添付の読み取りでは空行・行末空白が
+  落ちる。貼付は約 120K 文字が上限。よって手順文・規約文は本文用テキストで
+  渡す前提(パック内の埋め込みは貼付運用向けに残す)
 - `src/slnmixConfig.ts` — `slnmix.config.json`(任意)と
   `webview2-bridge.gen.json` の自動検出。`services/extraRootsCollector.ts`
   (追加ディレクトリの走査)、`services/contractSummary.ts`
