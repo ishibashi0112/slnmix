@@ -644,3 +644,11 @@ End Class
 | 2026-09-12 | `contract.schema.json` は `contractVersion === 1` のみ要約する。それ以外は理由付きで `<skipped_files>` へ | §8.3 の「未知の形式なら要約しない」。zod は入れない |
 | 2026-09-12 | extraRoots の既定除外(node_modules 等)は件数だけ診断に残し、`<skipped_files>` には載せない | 数千件になり出力を汚す。`exclude` / バイナリ / `.gitignore` による除外は従来どおり 1 件ずつ載せる |
 | 2026-09-12 | 認証情報マスクの `KEY = 値` パターンは、値の先頭が空白・引用符のもの(コードの代入 `KEY = "..."`)を対象外にした | web 側(TS)で `= "` の間の空白が値として `[MASKED]` になり代入の形が壊れていた。引用符内は文字列リテラルとして高エントロピー判定で扱う |
+| 2026-09-12 | petari §11.1 の純粋関数は「行配列 in → 挿入位置 + 挿入行 out」(`registerCompileItem`)。テキスト in/out ではなく、挿入行だけを行単位ドキュメントに差し込む | 既存の DocLine (raw バイト保持) 方式にそのまま乗せれば、挿入行以外を 1 バイトも変えない保証が実装ではなく構造で得られる |
+| 2026-09-12 | petari の `.vbproj` 登録先は「Compile を含む最初の **Condition なし** ItemGroup」。Condition 付きしかなければ新しい ItemGroup を作る | Condition 付きに入れると条件付きコンパイルになり、VS 上で見えない構成が生じる |
+| 2026-09-12 | `X.Designer.vb` には `<SubType>` を付けない。`<DependentUpon>` は親 `X.vb` が同じ changes.md で create されるときに加え、既にディスクにあるときも付ける | VS 自身の生成物と同じ形にする。ディスク上の親の存在は推測ではなく事実 |
+| 2026-09-12 | 同じ changes.md が `.vbproj` 自体も変更する場合は、その変更後の内容に登録を重ねる(スキップしない)。manifest は AI 側の op のまま `registered` を付け、純登録は `op: "vbproj"` | AI が .vbproj を触りつつ登録を忘れるケースこそ本機能の対象。undo は before 復元で両方戻る |
+| 2026-09-12 | petari `newFile.encoding: "auto"` の手本は同拡張子優先 → 任意のテキスト → 上位ディレクトリ。手本の条件は「通常ファイル・非ドットファイル・NUL なし・UTF-8/Shift_JIS としてデコード可能・1 MiB 以下」。同点は utf8 / BOM あり / CRLF 側 | 拡張子リストを持たず、デコード可否で判定する方が保守が要らない。同点の倒し方は .vb で安全な側 |
+| 2026-09-12 | petari config の合成で `encoding: "auto"` のときは既定の `eol: "lf"` を混ぜない(ユーザーが明示した `eol` / `bom` は auto でも優先) | 混ぜると改行の推定が常に lf に固定され auto の意味がなくなる。従来形式(eol のみ指定)は従来どおり既定とマージし後方互換 |
+| 2026-09-12 | petari §11.3(P2 目録警告)は未着手。slnmix フェーズ 4 の `--manifest` 実装後に着手する | 前提(§5 の依存)が未実装。任意項目 |
+| 2026-09-12 | petari は v0.9.0 として §11.1 / §11.2 / §11.4 を同時にリリース(規約文 v4)。`petari init` の雛形の既定を `"auto"` + `"vbproj": { "register": true }` に変更、既存 config は変えない | §11.2 の指示どおり。既存ユーザーは README の案内で切り替える |
