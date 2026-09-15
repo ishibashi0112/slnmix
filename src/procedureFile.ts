@@ -26,6 +26,11 @@
  *   <出力名>.prompt.md)。パック内の埋め込みは貼付運用(約 120K 文字以内で
  *   本文に丸ごと貼る場合)向けにそのまま残す。
  *
+ * docs/ 連携(フェーズ 6、2026-09-15 追加):
+ *   OutputTail.docs があれば、パックには <skipped_files> の後・<task> の前に
+ *   全文書を <docs> として、本文用テキストには「今編集される文書」だけを
+ *   <docs> として入れ、続けて <templates>(文書のひな型)を置く(docs.ts)。
+ *
  * ファイルシステムは deps 注入とし、単体テスト可能に保つ(CLI 固有機能)。
  */
 
@@ -35,6 +40,15 @@ import {
 	renderBuiltinProcedure,
 	renderProcedureTemplate,
 } from "./assets/procedure";
+import {
+	allDocs,
+	type DocsResolution,
+	type ModeDecision,
+	promptDocs,
+	promptTemplateKinds,
+	renderDocsBlock,
+	renderTemplatesBlock,
+} from "./docs";
 import {
 	appendBlock,
 	appendInstruction,
@@ -48,7 +62,9 @@ export const DEFAULT_PROCEDURE_FILE_NAME = "procedure.md";
 export type TaskResolution =
 	| { kind: "none" }
 	| { kind: "file"; path: string; content: string }
-	| { kind: "text"; content: string };
+	| { kind: "text"; content: string }
+	/** --task 省略時に docs/ の状態から決めた既定の依頼文 */
+	| { kind: "default"; content: string };
 
 /**
  * --task の値を解決する。引数がファイルとして存在すれば読み、存在しなければ
@@ -110,6 +126,8 @@ export interface ProcedureOptions {
 	/** --no-procedure */
 	disabled: boolean;
 	mode: ProcedureMode;
+	/** docs/ 連携が有効か(手順文に文書の扱いと引継ぎの節を入れる) */
+	docs?: boolean;
 }
 
 /**
@@ -126,6 +144,7 @@ export function resolveProcedure(
 		return { kind: "none" };
 	}
 	const { mode } = options;
+	const render = { docs: options.docs === true };
 	if (options.explicitPath !== undefined) {
 		const absolutePath = path.resolve(cwd, options.explicitPath);
 		const template = deps.readTextFile(absolutePath);
@@ -139,7 +158,7 @@ export function resolveProcedure(
 			kind: "file",
 			path: absolutePath,
 			mode,
-			content: renderProcedureTemplate(template, mode),
+			content: renderProcedureTemplate(template, mode, render),
 		};
 	}
 	const searchedPath = path.join(
@@ -152,10 +171,18 @@ export function resolveProcedure(
 			kind: "file",
 			path: searchedPath,
 			mode,
-			content: renderProcedureTemplate(template, mode),
+			content: renderProcedureTemplate(template, mode, render),
 		};
 	}
-	return { kind: "builtin", mode, content: renderBuiltinProcedure(mode) };
+	return { kind: "builtin", mode, content: renderBuiltinProcedure(mode, render) };
+}
+
+/** docs/ 連携の解決結果(OutputTail.docs) */
+export interface DocsTail {
+	docs: DocsResolution;
+	decision: ModeDecision;
+	/** 文書本文に通す変換(認証情報マスク)。省略時はそのまま */
+	transform?: (text: string) => string;
 }
 
 /** 出力末尾に付ける各ブロックの解決結果 */
@@ -164,6 +191,7 @@ export interface OutputTail {
 	plan: PlanResolution;
 	procedure: ProcedureResolution;
 	instruction: InstructionResolution;
+	docs?: DocsTail;
 }
 
 function hasProcedure(tail: OutputTail): boolean {
@@ -190,12 +218,16 @@ export function buildNotice(tail: OutputTail): string | undefined {
 	const hasPlan = tail.plan.kind === "found";
 	const hasProc = hasProcedure(tail);
 	const hasInstruction = tail.instruction.kind === "found";
+	const hasDocs = tail.docs !== undefined;
 
-	if (!hasTask && !hasPlan && !hasProc) {
+	if (!hasTask && !hasPlan && !hasProc && !hasDocs) {
 		return hasInstruction ? INSTRUCTION_NOTICE : undefined;
 	}
 
 	const blocks: string[] = [];
+	if (hasDocs) {
+		blocks.push("<docs>(プロジェクト文書: 設計書 / 仕様書 / 引継ぎ書)");
+	}
 	if (hasTask) {
 		blocks.push("<task>(依頼内容)");
 	}
@@ -237,11 +269,18 @@ export function buildNotice(tail: OutputTail): string | undefined {
 /** 末尾ブロックを一つでも持つか(本文貼付用テキストを出す条件) */
 export function hasTail(tail: OutputTail): boolean {
 	return (
+		tail.docs !== undefined ||
 		tail.task.kind !== "none" ||
 		tail.plan.kind === "found" ||
 		hasProcedure(tail) ||
 		tail.instruction.kind === "found"
 	);
+}
+
+/** 組み立て済みのブロック(閉じタグ・末尾改行込み)を本文の後に空行を挟んで連結する */
+function appendRawBlock(content: string, block: string): string {
+	const separator = content === "" ? "" : content.endsWith("\n") ? "\n" : "\n\n";
+	return `${content}${separator}${block}`;
 }
 
 /** <task> / <plan> / <procedure> / <instruction> をこの順で連結する(共通部) */
@@ -294,18 +333,46 @@ export function buildPromptText(
 		"[添付ファイルと本文の関係]",
 		`添付した ${packFileName} は、現在のコードベースを 1 ファイルにまとめたパック(slnmix 出力)です。`,
 		"添付内の <file> の内容を現在のコードとして正に扱ってください。",
+	];
+	let content = "";
+	if (tail.docs !== undefined) {
+		const docs = promptDocs(tail.docs.docs, tail.docs.decision);
+		const kinds = promptTemplateKinds(tail.docs.decision.mode);
+		header.push(
+			docs.length > 0
+				? `添付の <docs> にはプロジェクトの文書(設計書 / 仕様書 / 引継ぎ書)があります。このうち今回の作業で読む・更新する文書を以下の <docs> に再掲します(内容は添付と同じ)。`
+				: "添付の <docs> にはプロジェクトの文書(設計書 / 仕様書 / 引継ぎ書)があります(まだない場合は空です)。",
+			`続く <templates> は文書のひな型です。`,
+		);
+		content = appendRawBlock(
+			content,
+			renderDocsBlock(docs, tail.docs.transform ?? ((t) => t)),
+		);
+		content = appendRawBlock(content, renderTemplatesBlock(tail.docs.docs, kinds));
+	}
+	header.push(
 		`以下の ${blocks.join("、")} は、このコードに対する私(ユーザー)からの指示です。`,
 		"添付の先頭と末尾にも同じ内容が埋め込まれていますが、指示はこの本文のものに従ってください。",
-	].join("\n");
-	return appendTailBlocks(`${header}\n`, tail);
+	);
+	return appendTailBlocks(
+		content === "" ? `${header.join("\n")}\n` : `${header.join("\n")}\n\n${content}`,
+		tail,
+	);
 }
 
 /**
- * 本文の末尾に <task> / <plan> / <procedure> / <instruction> をこの順で連結し、
- * 先頭にリマインダを付ける。末尾に何もなければ本文をそのまま返す。
+ * 本文の末尾に <docs> / <task> / <plan> / <procedure> / <instruction> をこの順で
+ * 連結し、先頭にリマインダを付ける。末尾に何もなければ本文をそのまま返す。
  */
 export function assembleOutput(body: string, tail: OutputTail): string {
-	const content = appendTailBlocks(body, tail);
+	let content = body;
+	if (tail.docs !== undefined) {
+		content = appendRawBlock(
+			content,
+			renderDocsBlock(allDocs(tail.docs.docs), tail.docs.transform ?? ((t) => t)),
+		);
+	}
+	content = appendTailBlocks(content, tail);
 	const notice = buildNotice(tail);
 	return notice === undefined ? content : `${notice}\n${content}`;
 }

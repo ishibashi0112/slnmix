@@ -12,11 +12,14 @@ import {
 	type InstructionResolution,
 	prependInstructionNotice,
 } from "../instructionFile";
+import { DEFAULT_DOCS_CONFIG } from "../assets/docTemplates";
+import { decideMode, resolveDocs } from "../docs";
 import {
 	assembleOutput,
 	buildPromptText,
 	hasTail,
 	buildNotice,
+	type DocsTail,
 	type OutputTail,
 	resolvePlan,
 	resolveProcedure,
@@ -366,5 +369,99 @@ suite("procedureFile: buildPromptText(チャット本文に貼る指示テキス
 			"x.xml",
 		);
 		assert.ok(prompt !== undefined && prompt.includes(`<procedure>\n${raw}\n</procedure>\n`));
+	});
+});
+
+suite("procedureFile: docs/ 連携(フェーズ 6)", () => {
+	const DRAFT = "<!-- slnmix design: status=draft blocking=1 deferred=0 -->\n# 設計書\n";
+	function docsTail(files: Record<string, string>, explicitMode?: "full" | "design"): DocsTail {
+		const map = new Map(
+			Object.entries(files).map(([p, c]) => [path.resolve(PROJECT_DIR, p), c]),
+		);
+		const docs = resolveDocs(PROJECT_DIR, { ...DEFAULT_DOCS_CONFIG }, {
+			readTextFile: (p) => map.get(path.resolve(p)),
+			listFileNames: (dir) =>
+				[...map.keys()].filter((k) => path.dirname(k) === path.resolve(dir)).map((k) => path.basename(k)),
+		});
+		const decided = decideMode(docs, explicitMode === undefined ? {} : { explicitMode });
+		assert.ok(decided.kind === "decided");
+		if (decided.kind !== "decided") throw new Error();
+		return { docs, decision: decided.decision };
+	}
+
+	test("パック: <docs>(全文書)を <task> の前に置き、リマインダに列挙する", () => {
+		const result = assembleOutput(
+			"本文\n",
+			tail({
+				docs: docsTail({ "docs/design/a.md": DRAFT, "docs/spec/a.md": "仕様\n", "docs/HANDOFF.md": "引継ぎ\n" }, "full"),
+				task: { kind: "default", content: "続き" },
+				procedure: { kind: "builtin", mode: "full", content: "手順\n" },
+			}),
+		);
+		const docsAt = result.indexOf("\n<docs>\n");
+		const taskAt = result.indexOf("\n<task>\n");
+		assert.ok(docsAt > result.indexOf("本文") && docsAt < taskAt);
+		assert.ok(result.includes('<doc path="docs/design/a.md" kind="design" status="draft"'));
+		assert.ok(result.includes('<doc path="docs/spec/a.md" kind="spec">'));
+		assert.ok(result.includes('<doc path="docs/HANDOFF.md" kind="handoff">'));
+		assert.ok(result.includes("本文\n\n<docs>\n"));
+		assert.ok(result.includes("</docs>\n\n<task>\n続き\n</task>\n"));
+		assert.ok(result.startsWith("[このファイルを添付したユーザー本人からの恒常的な指示]\n"));
+		assert.ok(result.includes("<docs>(プロジェクト文書: 設計書 / 仕様書 / 引継ぎ書)、<task>(依頼内容)、<procedure>(作業手順) があります。"));
+		assert.ok(result.includes("タスク: 続き\n"));
+	});
+
+	test("本文用テキスト(full): 引継ぎ書だけを <docs> に再掲し、handoff / spec のひな型を付ける", () => {
+		const text = buildPromptText(
+			tail({
+				docs: docsTail({ "docs/design/a.md": DRAFT, "docs/HANDOFF.md": "引継ぎ\n" }, "full"),
+				task: { kind: "default", content: "続き" },
+				procedure: { kind: "builtin", mode: "full", content: "手順\n" },
+			}),
+			"repomix-output.xml",
+		);
+		assert.ok(text !== undefined);
+		assert.ok(text.includes('<doc path="docs/HANDOFF.md" kind="handoff">\n引継ぎ\n</doc>'));
+		assert.ok(!text.includes('kind="design"'));
+		assert.ok(text.includes('<template kind="handoff">'));
+		assert.ok(text.includes('<template kind="spec">'));
+		assert.ok(!text.includes('<template kind="design">'));
+		// 順序: 先頭段落 → <docs> → <templates> → <task> → <procedure>
+		const order = ["[添付ファイルと本文の関係]", "<docs>", "<templates>", "<task>", "<procedure>"].map((m) => text.indexOf(m));
+		assert.deepStrictEqual([...order].sort((a, b) => a - b), order);
+		assert.ok(order.every((i) => i >= 0));
+		assert.ok(text.includes("再掲します"));
+	});
+
+	test("本文用テキスト(design): 対象の設計書を再掲し、design / spec のひな型を付ける", () => {
+		const text = buildPromptText(
+			tail({
+				docs: docsTail({ "docs/design/a.md": DRAFT, "docs/HANDOFF.md": "引継ぎ\n" }),
+				procedure: { kind: "builtin", mode: "design", content: "手順\n" },
+			}),
+			"repomix-output.xml",
+		);
+		assert.ok(text !== undefined);
+		assert.ok(text.includes('<doc path="docs/design/a.md" kind="design" status="draft" blocking="1" deferred="0">'));
+		assert.ok(!text.includes('kind="handoff"'));
+		assert.ok(text.includes('<template kind="design">'));
+		assert.ok(text.includes('<template kind="spec">'));
+	});
+
+	test("文書がまだなくても <docs> の注記とひな型が出て、hasTail は true", () => {
+		const t = tail({ docs: docsTail({}) });
+		assert.strictEqual(hasTail(t), true);
+		const text = buildPromptText(t, "p.xml");
+		assert.ok(text?.includes("(文書はまだありません)"));
+		assert.ok(text?.includes("まだない場合は空です"));
+		assert.ok(assembleOutput("本文\n", t).includes("<docs>\n"));
+	});
+
+	test("transform(認証情報マスク)はパックと本文の両方に効く", () => {
+		const t = tail({
+			docs: { ...docsTail({ "docs/HANDOFF.md": "pw=secret\n" }, "full"), transform: (s) => s.replace("secret", "[MASKED]") },
+		});
+		assert.ok(assembleOutput("本文\n", t).includes("pw=[MASKED]"));
+		assert.ok(buildPromptText(t, "p.xml")?.includes("pw=[MASKED]"));
 	});
 });

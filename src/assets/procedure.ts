@@ -18,11 +18,15 @@
  * 意図的に無視することが実測で確定したため、この文面はパック末尾だけでなく
  * チャット本文に貼る指示テキスト(procedureFile.ts の buildPromptText)にも
  * 載る。「末尾の」「このパック」など置き場所に依存する表現を避けている。
+ *
+ * v3 (2026-09-15、フェーズ 6): design モード(設計書を質疑応答で仕上げる)を追加。
+ * docs/ 連携が有効なときだけ {{DOCS_SECTIONS}} に「文書の扱い」と
+ * 「チャットの継続と引継ぎ」の 2 節が入る(無効なら空 = v2 と同じ本文)。
  */
 
-export const PROCEDURE_VERSION = 2;
+export const PROCEDURE_VERSION = 3;
 
-export const PROCEDURE_MODES = ["full", "plan", "implement"] as const;
+export const PROCEDURE_MODES = ["full", "plan", "implement", "design"] as const;
 export type ProcedureMode = (typeof PROCEDURE_MODES)[number];
 
 export const DEFAULT_PROCEDURE_MODE: ProcedureMode = "full";
@@ -31,7 +35,10 @@ export function isProcedureMode(value: string): value is ProcedureMode {
 	return (PROCEDURE_MODES as readonly string[]).includes(value);
 }
 
-/** {{MODE}} と {{MODE_SECTIONS}} を含むテンプレート(procedure.md でも同じプレースホルダが使える) */
+/**
+ * {{MODE}} / {{MODE_SECTIONS}} / {{DOCS_SECTIONS}} を含むテンプレート
+ * (procedure.md でも同じプレースホルダが使える)
+ */
 export const PROCEDURE_TEMPLATE = `<!-- slnmix procedure v${PROCEDURE_VERSION} (mode: {{MODE}}) -->
 # 作業手順
 
@@ -59,7 +66,7 @@ export const PROCEDURE_TEMPLATE = `<!-- slnmix procedure v${PROCEDURE_VERSION} (
 - 既存コードの流儀(命名・エラー処理・DB アクセスの書き方)に合わせてください。パック内に同種の処理があれば、それを手本にしてください
 - Option Strict On を前提に、型変換は明示してください
 - 影響範囲は最小にしてください。求められていないリファクタリングはしないでください
-`;
+{{DOCS_SECTIONS}}`;
 
 // ---- 「回答の構成」の部品。モードごとに番号を振って組み立てる ----
 
@@ -80,6 +87,23 @@ const VERIFY_BODY = `changes.md の SEARCH ブロックごとに、次を表で�
 - 新規ファイルは create で出し、.vbproj を編集していない
 - 日本語 Shift_JIS のファイルに、Shift_JIS で表現できない文字を入れていない
 問題があれば changes.md を修正してから回答を確定してください。`;
+
+const DESIGN_INVESTIGATE_BODY = `受領した資料(テーブル定義・既存画面のコード・プロトタイプ等)と、手本にする既存コードを読み、分かったことを箇条書きで挙げてください。
+既存コードの流儀(SQL の書き方・ファイル構成・命名・エラー処理・監査列)のうち踏襲するものを挙げてください。
+資料から読み取れないことは推測せず、次の「確認事項」に回します。`;
+
+const DESIGN_DOC_BODY = `設計書を changes.md で出してください。初回は <template kind="design"> の章立てで docs/design/<画面名または機能名>.md を create、2 回目以降は <docs> にある現在の設計書への replace(章の大半が変わるときは rewrite)です。全文を出し直さず、変わった箇所だけを replace にしてください。
+設計書の 1 行目の状態行(status / blocking / deferred)を、確認事項(§10)の未回答数と一致するように更新してください。必須の未回答が 0 件になったら status=ready にし、版(見出しの vX.Y)と更新履歴(§12)も進めてください。
+コードの変更はこのモードでは出しません。`;
+
+const DESIGN_QUESTIONS_BODY = `ユーザーに確認したいことを番号付きで挙げてください。1 件ごとに種別(必須 = 回答がないと実装に進めない / 後回し = 実装を進めながら確認期限までに回答をもらう)と、後回しなら確認期限(どのバッチの着手前か)を付けてください。
+なければ「なし」と書いてください。設計書 §10 の表と同じ内容にしてください。`;
+
+const DESIGN_CONTINUE_BODY = `次のどちらかを 1 行で書いてください。
+- 「継続判定: 継続」— 必須の確認事項が残っている。回答を待って設計書を更新します
+- 「継続判定: 設計確定」— 必須の確認事項が 0 件。実装は新しいチャットで始めるようユーザーに伝え、次に打つべき操作(slnmix の実行 → 新しいチャットにパックを添付し本文用テキストを貼る)を案内してください
+設計確定のときは、同じ changes.md に仕様書の初版(<template kind="spec"> の §1〜§4 まで。docs/spec/<設計書と同じファイル名>.md を create)を含めてください。
+このモードでは引継ぎ書を書きません(設計書自体が次のチャットへの引継ぎになります)。`;
 
 function section(number: number, title: string, body: string): string {
 	return `### ${number}. ${title}\n${body}`;
@@ -121,22 +145,74 @@ export const MODE_SECTIONS: Readonly<Record<ProcedureMode, string>> = {
 		section(2, "変更", CHANGES_BODY),
 		section(3, "自己検証", VERIFY_BODY),
 	].join("\n\n"),
+	design: [
+		section(1, "調査", DESIGN_INVESTIGATE_BODY),
+		section(2, "設計書", DESIGN_DOC_BODY),
+		section(3, "確認事項", DESIGN_QUESTIONS_BODY),
+		section(4, "継続判定", DESIGN_CONTINUE_BODY),
+	].join("\n\n"),
 };
 
 /**
- * テンプレートの {{MODE}} / {{MODE_SECTIONS}} をモードに応じて置換する。
- * プレースホルダがなければそのまま返す(procedure.md による上書きで使う)。
+ * docs/ 連携が有効なときだけ手順文の末尾に付く 2 節。
+ * 文書の役割と更新規則、チャット切り替えの客観的な引き金を AI に与える。
+ * トークン残量は AI 自身に測れないため、会話の中で数えられる事象を条件にする。
+ */
+export const DOCS_SECTIONS = `
+## 文書(docs/)の扱い
+
+- <docs> にはプロジェクトの文書があります。kind="design" は設計書(開発の進め方と判断の根拠)、kind="spec" は仕様書(実装済みの振る舞いの正本)、kind="handoff" は引継ぎ書(前のチャットからの申し送り)です
+- 引継ぎ書があれば、最初にその「0. 次のチャットで最初にやること」に従ってください
+- 設計書と仕様書が食い違うときは仕様書を正としてください。意図的に設計から外れるときは、仕様書の「設計からの意図的な逸脱」に理由を残してください
+- 文書の更新も changes.md で出してください(パスは <doc> の path 属性)。小さな更新は replace、章の大半が変わるときは rewrite です。文書では \`===\` や \`---\` の下線による見出し(setext 形式)を使わず、必ず \`#\` 形式にしてください(適用ツールの区切りマーカーと衝突します)
+- 設計書の確認事項には 2 種類あります。「必須」は回答がないと実装に進めないもの、「後回し」は実装を進めながら確認期限(バッチ)までに回答をもらえばよいものです。バッチに着手する前に、確認期限がそのバッチ以前の「後回し」で未回答のものがないか設計書 §10 で確認し、あれば先に質問してください
+- 各バッチの完了時(ユーザーの動作確認が取れたとき)に、仕様書を実装した振る舞いに合わせて更新してください(該当機能の実装状況・処理フロー・逸脱・更新履歴)
+- <template> は文書のひな型です。文書を新しく作るときはこの章立てに従い、該当しない章は消さず「該当なし」と書いてください。ひな型内の HTML コメント(記入指示)は完成した文書に残さないでください
+
+## チャットの継続と引継ぎ
+
+- すべての回答の末尾に「継続判定: 継続」または「継続判定: 引継ぎ推奨(理由)」を 1 行付けてください(design モードでは「設計確定」が引継ぎ推奨に相当し、引継ぎ書は書きません)
+- 次のいずれかに該当したら「引継ぎ推奨」にしてください
+  1. 実装バッチが 1 つ完了し、ユーザーの動作確認が取れた
+  2. このチャットで changes.md を 3 回以上出した
+  3. 適用ツールの失敗レポートを 2 回受け取った(手元のコードとパックがずれている兆候)
+  4. ユーザーがパックを添付し直した
+- ユーザーが引継ぎに同意したら、引継ぎ書(<docs> の kind="handoff" の path。なければ docs/HANDOFF.md)を rewrite(初回は create)する changes.md を単独で出してください。コードの変更と同じ changes.md に混ぜないでください(適用後の状態を書くためです)。章立ては <template kind="handoff"> に従ってください
+- 引継ぎ書には規約・手順のコピーやコードの一覧を書かないでください。次のチャットにはツールが最新のパックと指示を付けます
+`;
+
+export interface RenderProcedureOptions {
+	/**
+	 * docs/ 連携が有効か({{DOCS_SECTIONS}} に文書の扱いと引継ぎの節を入れる)。
+	 * "placeholder" はプレースホルダを残す(--print-procedure 用。procedure.md に
+	 * 残しておけば実行時に設定に応じて置換される)
+	 */
+	docs?: boolean | "placeholder";
+}
+
+/**
+ * テンプレートの {{MODE}} / {{MODE_SECTIONS}} / {{DOCS_SECTIONS}} をモードに
+ * 応じて置換する。プレースホルダがなければそのまま返す(procedure.md による
+ * 上書きで使う)。docs が無効なら {{DOCS_SECTIONS}} は空文字になる。
  */
 export function renderProcedureTemplate(
 	template: string,
 	mode: ProcedureMode,
+	options: RenderProcedureOptions = {},
 ): string {
-	return template
+	const rendered = template
 		.replaceAll("{{MODE_SECTIONS}}", MODE_SECTIONS[mode])
 		.replaceAll("{{MODE}}", mode);
+	if (options.docs === "placeholder") {
+		return rendered;
+	}
+	return rendered.replaceAll("{{DOCS_SECTIONS}}", options.docs === true ? DOCS_SECTIONS : "");
 }
 
 /** 内蔵既定文をモードに応じて描画する */
-export function renderBuiltinProcedure(mode: ProcedureMode): string {
-	return renderProcedureTemplate(PROCEDURE_TEMPLATE, mode);
+export function renderBuiltinProcedure(
+	mode: ProcedureMode,
+	options: RenderProcedureOptions = {},
+): string {
+	return renderProcedureTemplate(PROCEDURE_TEMPLATE, mode, options);
 }

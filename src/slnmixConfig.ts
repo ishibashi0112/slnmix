@@ -15,6 +15,7 @@
  */
 
 import * as path from "path";
+import { DEFAULT_DOCS_CONFIG } from "./assets/docTemplates";
 import { normalizeGlobPath } from "./globMatcher";
 import type { ParseDiagnostic } from "./types";
 
@@ -32,8 +33,23 @@ export interface ExtraRootConfig {
 	exclude: string[];
 }
 
+/**
+ * docs/ 連携(フェーズ 6)。設計書・仕様書・引継ぎ書の置き場(ルート相対)。
+ * `"docs": true` で既定の配置、オブジェクトで個別指定。なければ連携なし
+ */
+export interface DocsConfig {
+	/** 設計書のディレクトリ(直下の *.md をすべて設計書とみなす) */
+	design: string;
+	/** 仕様書のディレクトリ(直下の *.md をすべて仕様書とみなす) */
+	spec: string;
+	/** 引継ぎ書のファイル(1 ファイル固定) */
+	handoff: string;
+}
+
 export interface SlnmixConfig {
 	extraRoots: ExtraRootConfig[];
+	/** docs/ 連携の設定(なければ undefined = 連携なし) */
+	docs?: DocsConfig;
 	/** contract.schema.json のルート相対パス(なければ undefined) */
 	contractSchema?: string;
 	/** 契約の正本(contract.ts)のルート相対パス(<contract_summary> の説明用) */
@@ -203,6 +219,53 @@ function readGenConfig(
 }
 
 /**
+ * docs 設定を読む。`true` なら既定配置、オブジェクトなら各キーを既定に重ねる。
+ * ルート外・絶対パスは警告して既定値に戻す(壊れた設定でも連携を落とさない)。
+ */
+function parseDocsConfig(
+	value: unknown,
+	diagnostics: ParseDiagnostic[],
+): DocsConfig | undefined {
+	if (value === undefined || value === false || value === null) {
+		return undefined;
+	}
+	if (value === true) {
+		return { ...DEFAULT_DOCS_CONFIG };
+	}
+	if (!isRecord(value)) {
+		diagnostics.push({
+			severity: "warning",
+			message: `${CONFIG_FILE_NAME}: docs は true またはオブジェクトで指定してください(無視します)`,
+		});
+		return undefined;
+	}
+	const pick = (key: keyof DocsConfig): string => {
+		const raw = value[key];
+		if (raw === undefined) {
+			return DEFAULT_DOCS_CONFIG[key];
+		}
+		const text = asString(raw);
+		if (text === undefined || text.trim() === "") {
+			diagnostics.push({
+				severity: "warning",
+				message: `${CONFIG_FILE_NAME}: docs.${key} は文字列で指定してください(既定 ${DEFAULT_DOCS_CONFIG[key]} を使います)`,
+			});
+			return DEFAULT_DOCS_CONFIG[key];
+		}
+		const normalized = normalizeRootRelative(text);
+		if (normalized === "" || normalized.startsWith("../") || path.isAbsolute(text)) {
+			diagnostics.push({
+				severity: "warning",
+				message: `${CONFIG_FILE_NAME}: docs.${key} はルート配下の相対パスで指定してください: ${text}(既定 ${DEFAULT_DOCS_CONFIG[key]} を使います)`,
+			});
+			return DEFAULT_DOCS_CONFIG[key];
+		}
+		return normalized;
+	};
+	return { design: pick("design"), spec: pick("spec"), handoff: pick("handoff") };
+}
+
+/**
  * @param rootDir ルート(.sln / .vbproj のあるディレクトリ)の絶対パス
  */
 export function loadSlnmixConfig(
@@ -240,6 +303,7 @@ export function loadSlnmixConfig(
 		if (isRecord(parsed)) {
 			config.sources.push(CONFIG_FILE_NAME);
 			config.extraRoots = parseExtraRoots(parsed["extraRoots"], diagnostics);
+			config.docs = parseDocsConfig(parsed["docs"], diagnostics);
 			const schema = asString(parsed["contractSchema"]);
 			if (schema !== undefined && schema.trim() !== "") {
 				explicitSchema = normalizeRootRelative(schema);
