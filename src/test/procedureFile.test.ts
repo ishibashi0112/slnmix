@@ -457,6 +457,16 @@ suite("procedureFile: docs/ 連携(フェーズ 6)", () => {
 		assert.ok(assembleOutput("本文\n", t).includes("<docs>\n"));
 	});
 
+	test("仕様書がなければ <docs> の注記で初版の作成を求める(パック・本文とも)", () => {
+		const t = tail({ docs: docsTail({ "docs/design/a.md": "<!-- slnmix design: status=ready -->\n# d\n" }, "full") });
+		for (const text of [assembleOutput("本文\n", t), buildPromptText(t, "p.xml") ?? ""]) {
+			assert.ok(text.includes("- 仕様書(kind=\"spec\")はまだありません。最初の回答で docs/spec/a.md の初版"));
+			assert.ok(text.includes("- 引継ぎ書(kind=\"handoff\")はまだありません"));
+		}
+		const designTail = tail({ docs: docsTail({ "docs/design/a.md": DRAFT }) });
+		assert.ok(!(buildPromptText(designTail, "p.xml") ?? "").includes("はまだありません。最初の回答で"));
+	});
+
 	test("transform(認証情報マスク)はパックと本文の両方に効く", () => {
 		const t = tail({
 			docs: { ...docsTail({ "docs/HANDOFF.md": "pw=secret\n" }, "full"), transform: (s) => s.replace("secret", "[MASKED]") },

@@ -10,6 +10,7 @@ import {
 	decideMode,
 	describeDocs,
 	type DocsDeps,
+	missingDocNotes,
 	parseDesignStatus,
 	promptDocs,
 	promptTemplateKinds,
@@ -197,6 +198,14 @@ suite("docs: decideMode(自動選択)", () => {
 		assert.ok(r.decision.defaultTask.includes("docs/HANDOFF.md"));
 	});
 
+	test("仕様書がなければ実装モードの既定タスクの先頭に初版作成を足す(あれば足さない)", () => {
+		const without = decide({ "docs/design/a.md": READY, "docs/HANDOFF.md": "h\n" });
+		assert.ok(without.kind === "decided" && without.decision.defaultTask.startsWith("仕様書がまだないため"));
+		assert.ok(without.kind === "decided" && without.decision.defaultTask.includes("docs/HANDOFF.md"));
+		const withSpec = decide({ "docs/design/a.md": READY, "docs/spec/a.md": "s\n" });
+		assert.ok(withSpec.kind === "decided" && !withSpec.decision.defaultTask.includes("仕様書がまだない"));
+	});
+
 	test("状態行のない設計書は ready 扱い → full", () => {
 		const r = decide({ "docs/design/legacy.md": "# 旧\n" });
 		assert.ok(r.kind === "decided" && r.decision.mode === "full");
@@ -253,8 +262,25 @@ suite("docs: 出力", () => {
 		assert.ok(block.includes('<doc path="docs/HANDOFF.md" kind="handoff">\npw = "[MASKED]"\n</doc>'));
 	});
 
-	test("renderDocsBlock: 文書がなければ注記だけ", () => {
+	test("renderDocsBlock: 文書がなければ注記だけ。notes は先頭ヘッダに箇条書きで載る", () => {
 		assert.ok(renderDocsBlock([]).includes("(文書はまだありません)"));
+		const block = renderDocsBlock([], (t) => t, ["注記 A", "注記 B"]);
+		assert.ok(block.includes("\n- 注記 A\n- 注記 B\n\n(文書はまだありません)"));
+	});
+
+	test("missingDocNotes: 仕様書・引継ぎ書がないことを実装モードでだけ明示し、設計書名からファイル名を決める", () => {
+		const docs = resolveDocs(ROOT, CONFIG, fakeDeps({ "docs/design/機種号機登録.md": READY }));
+		const notes = missingDocNotes(docs, "full");
+		assert.strictEqual(notes.length, 2);
+		assert.ok(notes[0]?.includes("docs/spec/機種号機登録.md の初版"));
+		assert.ok(notes[1]?.includes("docs/HANDOFF.md を create"));
+		assert.deepStrictEqual(missingDocNotes(docs, "design"), []);
+		const complete = resolveDocs(
+			ROOT,
+			CONFIG,
+			fakeDeps({ "docs/design/a.md": READY, "docs/spec/a.md": "s\n", "docs/HANDOFF.md": "h\n" }),
+		);
+		assert.deepStrictEqual(missingDocNotes(complete, "full"), []);
 	});
 
 	test("promptDocs: design モードは対象の設計書、それ以外は引継ぎ書だけ", () => {

@@ -43,6 +43,7 @@ import {
 import {
 	allDocs,
 	type DocsResolution,
+	missingDocNotes,
 	type ModeDecision,
 	promptDocs,
 	promptTemplateKinds,
@@ -346,7 +347,11 @@ export function buildPromptText(
 		);
 		content = appendRawBlock(
 			content,
-			renderDocsBlock(docs, tail.docs.transform ?? ((t) => t)),
+			renderDocsBlock(
+				docs,
+				tail.docs.transform ?? ((t) => t),
+				missingDocNotes(tail.docs.docs, tail.docs.decision.mode),
+			),
 		);
 		content = appendRawBlock(content, renderTemplatesBlock(tail.docs.docs, kinds));
 	}
@@ -369,7 +374,11 @@ export function assembleOutput(body: string, tail: OutputTail): string {
 	if (tail.docs !== undefined) {
 		content = appendRawBlock(
 			content,
-			renderDocsBlock(allDocs(tail.docs.docs), tail.docs.transform ?? ((t) => t)),
+			renderDocsBlock(
+				allDocs(tail.docs.docs),
+				tail.docs.transform ?? ((t) => t),
+				missingDocNotes(tail.docs.docs, tail.docs.decision.mode),
+			),
 		);
 	}
 	content = appendTailBlocks(content, tail);

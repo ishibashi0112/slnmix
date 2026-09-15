@@ -262,6 +262,13 @@ export function decideMode(
 		docs.handoff === undefined
 			? undefined
 			: `引継ぎ書 ${docs.handoff.relativePath} の「0. 次のチャットで最初にやること」に従い、「2. 次にやること」のバッチを進める。`;
+	// 実装モードの既定タスク。仕様書がなければ初版の作成を先頭に足す(既存プロジェクトの乗せ替え対応)
+	const implementTask = (): string => {
+		const main =
+			handoffNote ??
+			"設計書 §9 の実装バッチ計画で最初の未完了バッチを実装する。着手前に §10 の後回し確認事項の期限を確認する。";
+		return docs.spec.length === 0 ? `${SPEC_MISSING_TASK}${main}` : main;
+	};
 
 	// --design が指すもの(既存なら継続、なければ新規)
 	let designTarget: { entry?: DocEntry; newPath?: string } | undefined;
@@ -289,9 +296,7 @@ export function decideMode(
 		const decision: ModeDecision = {
 			mode: explicit,
 			reason: "指定",
-			defaultTask:
-				handoffNote ??
-				"設計書 §9 の実装バッチ計画で最初の未完了バッチを実装する。着手前に §10 の後回し確認事項の期限を確認する。",
+			defaultTask: implementTask(),
 		};
 		return { kind: "decided", decision };
 	}
@@ -356,11 +361,39 @@ export function decideMode(
 				docs.handoff !== undefined
 					? "自動: 設計書が ready、引継ぎ書あり(続きから)"
 					: "自動: 設計書が ready(最初のバッチから)",
-			defaultTask:
-				handoffNote ??
-				"設計書 §9 の実装バッチ計画で最初の未完了バッチを実装する。着手前に §10 の後回し確認事項の期限を確認する。",
+			defaultTask: implementTask(),
 		},
 	};
+}
+
+/** 仕様書がないときに既定タスクの先頭へ足す文(実装モード) */
+const SPEC_MISSING_TASK =
+	"仕様書がまだないため、最初の回答で仕様書の初版(docs/spec/ に設計書と同じファイル名。<template kind=\"spec\"> の章立てで、実装済みの振る舞いを反映)を create する changes.md を先に出す。その後、";
+
+/**
+ * <docs> の先頭に載せる注記。ない文書のうち AI に作ってほしいものを明示する
+ * (ひな型を渡すだけでは作られない)。design モードでは設計書自体が対象なので出さない。
+ */
+export function missingDocNotes(docs: DocsResolution, mode: ProcedureMode): string[] {
+	if (mode === "design") {
+		return [];
+	}
+	const notes: string[] = [];
+	if (docs.spec.length === 0) {
+		const name =
+			docs.design.length === 1
+				? path.posix.basename(docs.design[0]!.relativePath)
+				: "<設計書と同じファイル名>.md";
+		notes.push(
+			`仕様書(kind="spec")はまだありません。最初の回答で ${docs.config.spec}/${name} の初版を <template kind="spec"> の章立てで create してください(実装済みの振る舞いを反映。未実装の機能は「未」と記す)。`,
+		);
+	}
+	if (docs.handoff === undefined) {
+		notes.push(
+			`引継ぎ書(kind="handoff")はまだありません。チャットを切り替えるときに ${docs.config.handoff} を create してください。`,
+		);
+	}
+	return notes;
 }
 
 function escapeAttribute(value: string): string {
@@ -408,10 +441,12 @@ export function promptTemplateKinds(mode: ProcedureMode): DocKind[] {
 export function renderDocsBlock(
 	entries: readonly DocEntry[],
 	transform: (text: string) => string = (t) => t,
+	notes: readonly string[] = [],
 ): string {
 	const header = [
 		"プロジェクトの文書(docs/)。kind: design = 設計書(開発の進め方)、spec = 仕様書(実装済みの振る舞いの正本)、handoff = 引継ぎ書(前のチャットからの申し送り)。",
 		"文書の更新は changes.md で出す(パスは path 属性)。設計書の status / blocking / deferred は 1 行目の状態行から。",
+		...notes.map((n) => `- ${n}`),
 	];
 	const body =
 		entries.length === 0
