@@ -22,14 +22,19 @@ import {
 	renderBuiltinProcedure,
 } from "./assets/procedure";
 import { buildDesignerFileMatcher } from "./designerFileFilter";
+import { decideMode, describeDocs, resolveDocs, type DocsResolution } from "./docs";
+import { initDocs } from "./initDocs";
 import { resolveInstructionFile } from "./instructionFile";
 import {
 	assembleOutput,
 	buildPromptText,
+	type DocsTail,
 	resolvePlan,
 	resolveProcedure,
 	resolveTask,
+	type TaskResolution,
 } from "./procedureFile";
+import { maskCredentials } from "./services/credentialMasker";
 import { GitignoreEvaluator } from "./services/gitignoreService";
 import { loadSlnmixConfig } from "./slnmixConfig";
 import {
@@ -77,18 +82,28 @@ const USAGE = `slnmix — .sln / .vbproj の論理構成に基づく repomix 互
                         petari init が生成する規約文を想定)
       --task <file|text>  依頼内容を出力末尾に <task> として同梱する。ファイルが
                         存在すれば読み込み、なければ文字列として扱う
-      --mode <full|plan|implement>
-                        作業手順(<procedure>)のモード(既定: full)
+                        (docs 連携時に省略すると文書の状態に応じた既定文になる)
+      --mode <full|plan|implement|design>
+                        作業手順(<procedure>)のモード(既定: full。docs 連携時は
+                        文書の状態から自動選択)
                           full      調査 / 方針 / 変更(changes.md)/ 自己検証
                           plan      調査 / 方針 / 質問(changes.md は出させない)
                           implement 方針の確認 / 変更 / 自己検証(--plan が必須)
+                          design    調査 / 設計書 / 確認事項 / 継続判定
+                                    (設計書を質疑応答で仕上げる。docs 連携が必要)
+      --design <名前|file>
+                        design モードで対象の設計書を指定(既存なら継続、なければ
+                        docs/design/<名前>.md を新規作成)
+      --init-docs       docs/ 連携の初回セットアップ(docs/design/、docs/spec/、
+                        docs/README.md を作り slnmix.config.json に docs 設定を追記)
       --plan <file>     implement モードで承認済みの方針を <plan> として同梱する
       --procedure-file <path>
                         作業手順文を明示指定(既定: 入力と同じ場所の procedure.md を
                         自動検出。なければ内蔵既定文)
       --no-procedure    <procedure> を出さない(従来出力)
       --print-procedure 内蔵の作業手順文を標準出力に書いて終了(--mode 併用可。
-                        カスタマイズする人は procedure.md へリダイレクトして編集)
+                        カスタマイズする人は procedure.md へリダイレクトして編集。
+                        {{DOCS_SECTIONS}} は残しておくと docs 連携時に置換される)
       --prompt-output <file>
                         チャット本文に貼る指示テキスト(<task> / <plan> / <procedure> /
                         <instruction>)の出力先(既定: パックと同じ場所の
@@ -107,6 +122,8 @@ const USAGE = `slnmix — .sln / .vbproj の論理構成に基づく repomix 互
   npx slnmix --task task.md --mode plan            (方針だけ先に出させる)
   npx slnmix --task task.md --mode implement --plan plan.md
   npx slnmix --print-procedure > procedure.md      (手順文をカスタマイズ)
+  npx slnmix --init-docs                           (docs/ 連携を始める。一回だけ)
+  npx slnmix                                       (以後は文書の状態からモード自動)
 
 M365 Copilot Chat への渡し方(推奨):
   パック(repomix-output.xml)を添付し、<出力名>.prompt.md の内容を本文に貼る。
@@ -266,7 +283,9 @@ function main(): number {
 			"include-generated": { type: "boolean", default: false },
 			"instruction-file": { type: "string" },
 			task: { type: "string" },
-			mode: { type: "string", default: DEFAULT_PROCEDURE_MODE },
+			mode: { type: "string" },
+			design: { type: "string" },
+			"init-docs": { type: "boolean", default: false },
 			plan: { type: "string" },
 			"procedure-file": { type: "string" },
 			"no-procedure": { type: "boolean", default: false },
@@ -289,24 +308,28 @@ function main(): number {
 		return 0;
 	}
 
-	const mode = values.mode;
-	if (!isProcedureMode(mode)) {
+	const explicitMode = values.mode;
+	if (explicitMode !== undefined && !isProcedureMode(explicitMode)) {
 		console.error(
-			`--mode は ${PROCEDURE_MODES.join(" / ")} のいずれかを指定してください: ${mode}`,
+			`--mode は ${PROCEDURE_MODES.join(" / ")} のいずれかを指定してください: ${explicitMode}`,
 		);
 		return 1;
 	}
 	if (values["print-procedure"]) {
-		process.stdout.write(renderBuiltinProcedure(mode));
+		process.stdout.write(
+			renderBuiltinProcedure(explicitMode ?? DEFAULT_PROCEDURE_MODE, {
+				docs: "placeholder",
+			}),
+		);
 		return 0;
 	}
-	if (mode === "implement" && values.plan === undefined) {
+	if (explicitMode === "implement" && values.plan === undefined) {
 		console.error(
 			"--mode implement には --plan <file>(承認済みの方針)が必要です。先に --mode plan で方針を出し、確認したものを渡してください。",
 		);
 		return 1;
 	}
-	if (mode !== "implement" && values.plan !== undefined) {
+	if (explicitMode !== "implement" && values.plan !== undefined) {
 		console.error("--plan は --mode implement でのみ使えます。");
 		return 1;
 	}
@@ -336,6 +359,31 @@ function main(): number {
 	const targetPath = resolution.path;
 	if (resolution.autoDetected) {
 		console.error(`対象: ${targetPath}(自動検出)`);
+	}
+
+	// docs/ 連携の初回セットアップ(パックは作らない)
+	if (values["init-docs"]) {
+		const result = initDocs(path.dirname(targetPath), {
+			exists: (p) => fs.existsSync(p),
+			readTextFile: readSourceTextFile,
+			writeTextFile: (p, content) => fs.writeFileSync(p, content, "utf8"),
+			makeDirectory: (p) => fs.mkdirSync(p, { recursive: true }),
+		});
+		for (const item of result.created) {
+			console.error(`作成: ${item}`);
+		}
+		for (const item of result.kept) {
+			console.error(`既存: ${item}(変更なし)`);
+		}
+		for (const message of result.errors) {
+			console.error(`[error] ${message}`);
+		}
+		if (result.errors.length === 0) {
+			console.error(
+				"docs/ 連携を有効にしました。以後は npx slnmix を実行するだけで、文書の状態に応じたモードでパックと本文用テキストを作ります。",
+			);
+		}
+		return result.errors.length === 0 ? 0 : 1;
 	}
 
 	const sources = collectSources(targetPath);
@@ -387,6 +435,49 @@ function main(): number {
 		console.error(`設定: ${config.sources.join(", ")}(${parts.join(" / ")})`);
 	}
 
+	// docs/ 連携: 文書を読み、作業モードと既定タスクを決める
+	let docs: DocsResolution | undefined;
+	let docsTail: DocsTail | undefined;
+	let mode = explicitMode ?? DEFAULT_PROCEDURE_MODE;
+	let modeReason = explicitMode === undefined ? "既定" : "指定";
+	let defaultTask: string | undefined;
+	if (config.docs !== undefined) {
+		docs = resolveDocs(rootDir, config.docs, {
+			readTextFile: readSourceTextFile,
+			listFileNames: FS_DEPS.listFileNames,
+		});
+		printDiagnostics("docs", docs.diagnostics);
+		console.error(`文書: ${describeDocs(docs)}`);
+		const decided = decideMode(docs, {
+			...(explicitMode === undefined ? {} : { explicitMode }),
+			...(values.design === undefined ? {} : { designArg: values.design }),
+		});
+		if (decided.kind === "error") {
+			console.error(decided.message);
+			return 1;
+		}
+		mode = decided.decision.mode;
+		modeReason = decided.decision.reason;
+		defaultTask = decided.decision.defaultTask;
+		const strict = !values["no-strict-mask"];
+		docsTail = {
+			docs,
+			decision: decided.decision,
+			...(values["no-mask"]
+				? {}
+				: {
+						transform: (text: string) =>
+							maskCredentials(text, { vbSource: false, strict }).content,
+					}),
+		};
+	} else if (explicitMode === "design" || values.design !== undefined) {
+		console.error(
+			"--mode design / --design には docs/ 連携が必要です。先に npx slnmix --init-docs を実行してください。",
+		);
+		return 1;
+	}
+	console.error(`モード: ${mode}(${modeReason})`);
+
 	// petari 等の規約文(protocol.md)を出力末尾へ連結する(なければ従来どおり)
 	const instruction = resolveInstructionFile(
 		values["instruction-file"],
@@ -401,7 +492,10 @@ function main(): number {
 
 	// 作業手順(<procedure>)・依頼内容(<task>)・承認済み方針(<plan>)
 	const textDeps = { readTextFile: readSourceTextFile };
-	const task = resolveTask(values.task, process.cwd(), textDeps);
+	let task: TaskResolution = resolveTask(values.task, process.cwd(), textDeps);
+	if (task.kind === "none" && defaultTask !== undefined) {
+		task = { kind: "default", content: defaultTask };
+	}
 	const plan = resolvePlan(values.plan, process.cwd(), textDeps);
 	if (plan.kind === "error") {
 		console.error(plan.message);
@@ -412,6 +506,7 @@ function main(): number {
 			explicitPath: values["procedure-file"],
 			disabled: values["no-procedure"],
 			mode,
+			docs: docs !== undefined,
 		},
 		targetPath,
 		process.cwd(),
@@ -426,10 +521,14 @@ function main(): number {
 	const outputPath = path.resolve(
 		values.output ?? path.join(path.dirname(targetPath), "repomix-output.xml"),
 	);
-	const promptText = buildPromptText(
-		{ task, plan, procedure, instruction },
-		path.basename(outputPath),
-	);
+	const promptTail = {
+		task,
+		plan,
+		procedure,
+		instruction,
+		...(docsTail === undefined ? {} : { docs: docsTail }),
+	};
+	const promptText = buildPromptText(promptTail, path.basename(outputPath));
 	if (values["print-prompt"]) {
 		if (promptText === undefined) {
 			console.error(
@@ -489,12 +588,7 @@ function main(): number {
 
 	// 末尾に <task> / <plan> / <procedure> / <instruction>、先頭にリマインダの
 	// サンドイッチ配置(チャットの要約処理で末尾が落ちても冒頭が末尾へ誘導する)
-	const content = assembleOutput(output.content, {
-		task,
-		plan,
-		procedure,
-		instruction,
-	});
+	const content = assembleOutput(output.content, promptTail);
 	if (instruction.kind === "none") {
 		console.error(
 			`protocol.md が見つかりません(規約文なしで出力): ${instruction.searchedPath}`,
@@ -504,6 +598,8 @@ function main(): number {
 		console.error(`タスク: ${task.path}`);
 	} else if (task.kind === "text") {
 		console.error(`タスク: 引数の文字列(${task.content.length} 文字)`);
+	} else if (task.kind === "default") {
+		console.error(`タスク: 既定(${task.content})`);
 	}
 	if (plan.kind === "found") {
 		console.error(`方針: ${plan.path}`);
@@ -568,6 +664,11 @@ function main(): number {
 	if (promptPath !== undefined) {
 		console.error(
 			`添付で渡す場合は ${path.basename(promptPath)} の内容を本文に貼ってください(添付内の指示は Copilot が無視します)`,
+		);
+	}
+	if (promptText !== undefined && promptText.length > PASTE_LIMIT_CHARS) {
+		console.error(
+			`[warning] 本文用テキストが約 ${Math.round(promptText.length / 1000)}K 文字で貼付上限の目安を超えています。設計書・引継ぎ書を分割するか、--no-mask 以外の方法で短くしてください`,
 		);
 	}
 	return 0;

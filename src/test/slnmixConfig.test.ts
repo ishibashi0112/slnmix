@@ -146,3 +146,57 @@ suite("slnmixConfig: webview2-bridge.gen.json の自動検出", () => {
 		assert.strictEqual(normalizeRootRelative(".\\apps\\web\\"), "apps/web");
 	});
 });
+
+suite("slnmixConfig: docs(フェーズ 6)", () => {
+	test("docs がなければ undefined(連携なし)", () => {
+		const { config } = loadSlnmixConfig(ROOT, fakeDeps({ "slnmix.config.json": "{}" }));
+		assert.strictEqual(config.docs, undefined);
+	});
+
+	test("docs: true は既定配置", () => {
+		const { config, diagnostics } = loadSlnmixConfig(
+			ROOT,
+			fakeDeps({ "slnmix.config.json": '{ "docs": true }' }),
+		);
+		assert.deepStrictEqual(config.docs, {
+			design: "docs/design",
+			spec: "docs/spec",
+			handoff: "docs/HANDOFF.md",
+		});
+		assert.deepStrictEqual(diagnostics, []);
+	});
+
+	test("オブジェクトは各キーを既定に重ね、区切りを正規化する", () => {
+		const { config } = loadSlnmixConfig(
+			ROOT,
+			fakeDeps({ "slnmix.config.json": '{ "docs": { "design": "./doc/設計/", "handoff": "doc/H.md" } }' }),
+		);
+		assert.deepStrictEqual(config.docs, {
+			design: "doc/設計",
+			spec: "docs/spec",
+			handoff: "doc/H.md",
+		});
+	});
+
+	test("ルート外・絶対パス・非文字列は警告して既定に戻す", () => {
+		const { config, diagnostics } = loadSlnmixConfig(
+			ROOT,
+			fakeDeps({ "slnmix.config.json": '{ "docs": { "design": "../x", "spec": 1 } }' }),
+		);
+		assert.deepStrictEqual(config.docs, {
+			design: "docs/design",
+			spec: "docs/spec",
+			handoff: "docs/HANDOFF.md",
+		});
+		assert.strictEqual(diagnostics.length, 2);
+	});
+
+	test("docs が文字列など不正な型なら警告して連携なし", () => {
+		const { config, diagnostics } = loadSlnmixConfig(
+			ROOT,
+			fakeDeps({ "slnmix.config.json": '{ "docs": "docs" }' }),
+		);
+		assert.strictEqual(config.docs, undefined);
+		assert.strictEqual(diagnostics.length, 1);
+	});
+});

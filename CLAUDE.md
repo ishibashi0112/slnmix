@@ -40,6 +40,15 @@ workbench は 2026-09 時点で凍結(新機能は追わない)。
   「埋め込み指示」として意図的に無視され、添付の読み取りでは空行・行末空白が
   落ちる。貼付は約 120K 文字が上限。よって手順文・規約文は本文用テキストで
   渡す前提(パック内の埋め込みは貼付運用向けに残す)
+- `src/docs.ts` / `src/initDocs.ts` / `src/assets/docTemplates.ts` — docs/ 連携
+  (設計書・仕様書・引継ぎ書。設計書 §18)。設計書 1 行目の状態行
+  `<!-- slnmix design: status=draft|ready blocking=N deferred=N -->` だけを読んで
+  `--mode` 省略時のモードと `--task` 省略時の既定文を決める(本文は解釈しない)。
+  パックの `<docs>` には全文書、本文用テキストには「今編集される文書」だけ
+  (design: 対象の設計書、他: 引継ぎ書)+ `<templates>`。ひな型 3 種は内蔵
+  (`DOC_TEMPLATES_VERSION`)、`docs/templates/<kind>.md` で上書き。
+  `--init-docs` は冪等な scaffold。手順文 v3 の `{{DOCS_SECTIONS}}` は docs 連携時
+  のみ置換(`test-fixtures/procedure/<mode>.docs.md`)。petari は無改修
 - `src/slnmixConfig.ts` — `slnmix.config.json`(任意)と
   `webview2-bridge.gen.json` の自動検出。`services/extraRootsCollector.ts`
   (追加ディレクトリの走査)、`services/contractSummary.ts`
