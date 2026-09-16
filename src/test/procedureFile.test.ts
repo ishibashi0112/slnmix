@@ -464,7 +464,9 @@ suite("procedureFile: docs/ 連携(フェーズ 6)", () => {
 			assert.ok(text.includes("- 引継ぎ書(kind=\"handoff\")はまだありません"));
 		}
 		const designTail = tail({ docs: docsTail({ "docs/design/a.md": DRAFT }) });
-		assert.ok(!(buildPromptText(designTail, "p.xml") ?? "").includes("はまだありません。最初の回答で"));
+		const designText = buildPromptText(designTail, "p.xml") ?? "";
+		assert.ok(!designText.includes("はまだありません。最初の回答で"));
+		assert.ok(designText.includes("現状の仕様書(as-is)"));
 	});
 
 	test("transform(認証情報マスク)はパックと本文の両方に効く", () => {

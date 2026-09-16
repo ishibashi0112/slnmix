@@ -20,7 +20,7 @@
  * スナップショットを更新すること。
  */
 
-export const DOC_TEMPLATES_VERSION = 2;
+export const DOC_TEMPLATES_VERSION = 3;
 
 export const DOC_KINDS = ["design", "spec", "handoff"] as const;
 export type DocKind = (typeof DOC_KINDS)[number];
@@ -79,6 +79,15 @@ const DESIGN_TEMPLATE = `<!-- slnmix design: status=draft blocking=0 deferred=0 
 ### 1-2. やらないこと(責務の境界)
 
 - <他の画面・処理に任せること。誤って実装しないための線引き>
+
+### 1-3. 改修の場合: 現状と変更点
+
+<!-- 既存の画面・機能への仕様追加・変更のときだけ書く(新規なら「該当なし」)。
+     現状は仕様書(docs/spec/)の § を参照し、変更後との差を 1 行 1 項目で -->
+
+| # | 現状(仕様書の §) | 変更後 | 影響する画面・処理 |
+|---|---|---|---|
+| | | | |
 
 ---
 

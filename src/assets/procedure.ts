@@ -26,9 +26,13 @@
  * v4 (2026-09-15): バッチ完了 + 動作確認 OK のときは同意を待たずに引継ぎ書を出す
  * (「1 バッチ = 1 チャット」を既定の動きに)。エラー修正のラリーが続いたときは
  * 推奨にとどめ、途中で引き継ぐなら未解決のエラーと試したことを書かせる。
+ *
+ * v5 (2026-09-16): 完成済みプロジェクトの改修(文書が何もない)向けに、design モードで
+ * 「既存の画面・機能の改修なら、設計書より先に改修対象に限った現状の仕様書(as-is)を
+ * コードから起こす」を追加。設計書はその仕様書を参照して変更点を書く。
  */
 
-export const PROCEDURE_VERSION = 4;
+export const PROCEDURE_VERSION = 5;
 
 export const PROCEDURE_MODES = ["full", "plan", "implement", "design"] as const;
 export type ProcedureMode = (typeof PROCEDURE_MODES)[number];
@@ -97,6 +101,7 @@ const DESIGN_INVESTIGATE_BODY = `受領した資料(テーブル定義・既存�
 資料から読み取れないことは推測せず、次の「確認事項」に回します。`;
 
 const DESIGN_DOC_BODY = `設計書を changes.md で出してください。初回は <template kind="design"> の章立てで docs/design/<画面名または機能名>.md を create、2 回目以降は <docs> にある現在の設計書への replace(章の大半が変わるときは rewrite)です。全文を出し直さず、変わった箇所だけを replace にしてください。
+依頼が既存の画面・機能の改修(仕様追加・変更)で、その画面の仕様書が <docs> にない場合は、設計書より先に、改修対象の画面・機能に限った現状の仕様書(as-is)を <template kind="spec"> の章立てで docs/spec/<画面名>.md として同じ changes.md で create してください。パックのコードから読み取れる振る舞いだけを書き、読み取れないことは「未確認」と記します。プロジェクト全体の仕様書を一度に起こさないでください。設計書の変更点(§1-3)は、その仕様書の § を参照して「現状 → 変更後」で書いてください。
 設計書の 1 行目の状態行(status / blocking / deferred)を、確認事項(§10)の未回答数と一致するように更新してください。必須の未回答が 0 件になったら status=ready にし、版(見出しの vX.Y)と更新履歴(§12)も進めてください。
 コードの変更はこのモードでは出しません。`;
 
@@ -106,7 +111,7 @@ const DESIGN_QUESTIONS_BODY = `ユーザーに確認したいことを番号付�
 const DESIGN_CONTINUE_BODY = `次のどちらかを 1 行で書いてください。
 - 「継続判定: 継続」— 必須の確認事項が残っている。回答を待って設計書を更新します
 - 「継続判定: 設計確定」— 必須の確認事項が 0 件。実装は新しいチャットで始めるようユーザーに伝え、次に打つべき操作(slnmix の実行 → 新しいチャットにパックを添付し本文用テキストを貼る)を案内してください
-設計確定のときは、同じ changes.md に仕様書の初版(<template kind="spec"> の §1〜§4 まで。docs/spec/<設計書と同じファイル名>.md を create)を含めてください。
+設計確定のときは、仕様書がまだなければ同じ changes.md に初版(<template kind="spec"> の §1〜§4 まで。docs/spec/<設計書と同じファイル名>.md を create)を含め、改修で既に現状の仕様書があれば変更後の振る舞いを「未」の実装状況で追記してください。
 このモードでは引継ぎ書を書きません(設計書自体が次のチャットへの引継ぎになります)。`;
 
 function section(number: number, title: string, body: string): string {

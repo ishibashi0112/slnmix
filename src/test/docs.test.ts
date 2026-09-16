@@ -274,13 +274,17 @@ suite("docs: 出力", () => {
 		assert.strictEqual(notes.length, 2);
 		assert.ok(notes[0]?.includes("docs/spec/機種号機登録.md の初版"));
 		assert.ok(notes[1]?.includes("docs/HANDOFF.md を create"));
-		assert.deepStrictEqual(missingDocNotes(docs, "design"), []);
+		const designNotes = missingDocNotes(docs, "design");
+		assert.strictEqual(designNotes.length, 1);
+		assert.ok(designNotes[0]?.includes("現状の仕様書(as-is)"));
+		assert.ok(designNotes[0]?.includes("docs/spec/<画面名>.md"));
 		const complete = resolveDocs(
 			ROOT,
 			CONFIG,
 			fakeDeps({ "docs/design/a.md": READY, "docs/spec/a.md": "s\n", "docs/HANDOFF.md": "h\n" }),
 		);
 		assert.deepStrictEqual(missingDocNotes(complete, "full"), []);
+		assert.deepStrictEqual(missingDocNotes(complete, "design"), []);
 	});
 
 	test("promptDocs: design モードは対象の設計書、それ以外は引継ぎ書だけ", () => {

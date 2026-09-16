@@ -376,7 +376,13 @@ const SPEC_MISSING_TASK =
  */
 export function missingDocNotes(docs: DocsResolution, mode: ProcedureMode): string[] {
 	if (mode === "design") {
-		return [];
+		// 設計中は仕様書の初版を「設計確定時」に作る。ただし既存機能の改修なら、
+		// 設計書より先に改修対象の現状の仕様書(as-is)を起こしてもらう
+		return docs.spec.length === 0
+			? [
+					`仕様書(kind="spec")はまだありません。依頼が既存の画面・機能の改修なら、設計書より先に、改修対象の画面・機能に限った現状の仕様書(as-is)を ${docs.config.spec}/<画面名>.md として <template kind="spec"> の章立てで create してください(コードから読み取れる振る舞いのみ。不明は「未確認」)。新規の画面・機能なら設計確定時に初版を作ります。`,
+				]
+			: [];
 	}
 	const notes: string[] = [];
 	if (docs.spec.length === 0) {
