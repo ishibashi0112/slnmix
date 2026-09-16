@@ -443,8 +443,12 @@ npx petari          # AI の changes.md(コード・文書の両方)を適用す
 \`\`\`
 
 Copilot Chat には .xml を添付し、.prompt.md の中身を本文に貼ります。
-AI は回答の末尾に「継続判定」を付け、引継ぎを勧めたら HANDOFF.md を書き直す
+AI は回答の末尾に「継続判定」を付け、バッチ完了時は HANDOFF.md を書き直す
 changes.md を出します。
+
+場面別の手順(新規開発・実装の続き・既存プロジェクトの乗せ替え・継続判定への
+対応・コマンド早見表)は slnmix の運用ガイドを参照:
+https://github.com/ishibashi0112/slnmix/blob/main/docs/WORKFLOW.md
 `;
 
 /** slnmix.config.json に --init-docs が書く docs 設定の既定値 */

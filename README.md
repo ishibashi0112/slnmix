@@ -351,6 +351,10 @@ npx slnmix --print-procedure --mode plan                 # モード別の文面
 
 ## プロジェクト文書の連携(`docs/` — 設計書・仕様書・引継ぎ書)
 
+日々の手順(新規開発の始め方・実装の続け方・既存プロジェクトの乗せ替え・
+継続判定への対応・コマンド早見表)は
+[docs/WORKFLOW.md](docs/WORKFLOW.md) にまとめています。迷ったらそちらを開いてください。
+
 設計書や引継ぎ書を毎回チャットに添付する代わりに、プロジェクトの `docs/` に置いて
 slnmix に読ませます。文書の状態から作業モードが自動で決まり、文書の作成・更新も
 AI が changes.md で出して [petari](https://github.com/ishibashi0112/petari) が保存する
