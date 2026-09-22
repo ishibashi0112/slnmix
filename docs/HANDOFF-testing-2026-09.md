@@ -432,6 +432,34 @@ Copilot は実行できないので、Copilot 開発でのテストは「Copilot
 対象外で確定。§7-1 の条件付き置換により手順文にテストの節が出ないので、既存の
 運用は変わらない。
 
+### 7-8. フェーズ C の実装メモ (2026-09-22、slnmix v0.15.0)
+
+- プレースホルダは `{{TEST_SECTIONS}}`。`PROCEDURE_TEMPLATE` の末尾 (`{{DOCS_SECTIONS}}` の
+  直後) に置き、`renderProcedureTemplate` の `tests: boolean | "placeholder"` で
+  `{{DOCS_SECTIONS}}` と同じ扱い (`--print-procedure` は両方を残す)。置換文は
+  `TEST_SECTIONS` 定数 1 つで、§7-1 の各項目 (パックの読み方・変更・自己検証・判断の原則・
+  design の完了条件) を既存の節に散らさず「## 自動テスト」の 1 節にまとめた
+  (テスト無しの本文を v5 と 1 文字も変えないため。v6 で足したものはすべてこの節の中)
+- 判定は `src/autoTests.ts` の純粋関数 `detectAutoTests(filePaths, extraRoots)`。
+  (a) `buildRepomixOutput` が実際に出力した `<file>` の path (新設 `RepomixExportResult.filePaths`。
+  除外・要約済みのものは含まない) のうち、`/` に正規化・小文字化したパスが `e2e/` で始まる
+  か `/e2e/` を含むか、末尾が `.spec.ts` `.spec.tsx` `.test.ts` `.test.tsx` のものがある、
+  または (b) `extraRoots` に `kind === "test"` (完全一致) がある。どちらも無ければ「なし」。
+  このため cli.ts はパック本文をモード決定より先に組み立てる (`--print-prompt` でも組み立てる)
+- 標準エラーの要約行に `自動テスト: あり(パック内に e2e/screen/order.spec.ts ほか 2 件 / extraRoots に kind: "test")`
+  または `自動テスト: なし` を「モード:」の直後に出す
+- スナップショット: 既存の `test-fixtures/procedure/<mode>.md` / `<mode>.docs.md` は版数の行だけを
+  v5 → v6 に置換 (本文の diff ゼロを `git show HEAD:… | sed` との比較と、本文に「テスト」が
+  含まれないことのテストで担保)。自動テストありは `<mode>.tests.md` / `<mode>.docs.tests.md` を
+  4 モードすべてに追加
+- ひな型 v4 (`DOC_TEMPLATES_VERSION = 4`): 設計書 §9 の表を「完了条件: 自動テスト (ファイル名)」
+  「完了条件: 手動確認 (項目)」の 2 列に分割、仕様書に「10. テスト」(機能 / 層 / テストファイル /
+  手動確認が要る項目) を追加し以降を 11 / 12 に繰り下げ、引継ぎ書 §7 を「自動テスト:」
+  「手動確認:」の 2 行に。§7-0 の表と `TEST_SECTIONS` の表が参照する章番号は変わっていない
+  (`docTemplates.test.ts` が表の参照とひな型の見出しを突き合わせる)
+- `slnmixConfig.ts` の `DEFAULT_INCLUDE.test = ["**/*.{ts,tsx,json,md}"]`。雛形側の
+  `{ "path": "e2e", "kind": "test" }` は webview2-bridge (フェーズ B) の担当
+
 ## 8. 既存プロジェクトを崩さない保証
 
 | リポジトリ | 保証 | 担保 |

@@ -83,6 +83,11 @@ suite("repomixExporter: buildRepomixOutput", () => {
 		// Module1.vb / OrderForm.vb / App.config の 3 件(Designer 系・resx は除外)
 		assert.strictEqual(result.fileCount, 3);
 		assert.ok(result.totalChars > 0);
+		// filePaths は出力した <file> の path 属性と同じ(除外したものは含まない)
+		assert.strictEqual(result.filePaths.length, result.fileCount);
+		assert.ok(result.filePaths.includes("Basic\\Module1.vb"));
+		assert.ok(result.filePaths.includes("Basic\\Forms\\OrderForm.vb"));
+		assert.ok(!result.filePaths.includes("Basic\\Forms\\OrderForm.Designer.vb"));
 	});
 
 	test("includeSensitive で Designer 関連も含められる", () => {
@@ -559,6 +564,12 @@ suite("repomixExporter: 物理パス化(hybrid fixture)", () => {
 		assert.ok(result.content.includes("[contract] contract/\n  contract.ts\n  package.json"));
 		assert.strictEqual(result.extraRootFileCount, 8);
 		assert.strictEqual(result.fileCount, 3 + 8);
+		// extraRoots のファイルも filePaths に入る(自動テストの有無の判定に使う)
+		assert.strictEqual(result.filePaths.length, 3 + 8);
+		assert.ok(result.filePaths.includes("App/Forms/MainForm.vb"));
+		assert.ok(result.filePaths.includes("apps/web/src/App.tsx"));
+		assert.ok(result.filePaths.includes("contract/contract.ts"));
+		assert.ok(!result.filePaths.includes("contract/contract.schema.json"), "要約済みの契約スキーマは <file> に出ないので含まない");
 	});
 
 	test(".env と include 対象外(README.md)は含まれない", () => {

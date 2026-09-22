@@ -38,6 +38,12 @@ workbench は 2026-09 時点で凍結(新機能は追わない)。
   先頭リマインダ、チャット本文に貼る指示テキスト(`buildPromptText` →
   `<出力名>.prompt.md`)。内蔵文を変えたら `PROCEDURE_VERSION` を上げ
   `test-fixtures/procedure/` のスナップショットを更新する
+- 手順文 v6 の `{{TEST_SECTIONS}}`(「自動テスト」の節。`docs/HANDOFF-testing-2026-09.md`
+  §7)は `src/autoTests.ts` の判定(出力する `<file>` に `e2e/` 配下 or
+  `*.spec.ts` / `*.test.ts` があるか、extraRoots に `kind: "test"` があるか)が真の
+  ときだけ置換する。テストの無いプロジェクトの手順文は v5 と本文同一に保つ
+  (`<mode>.md` / `<mode>.docs.md` は版数の行だけを変えて更新し、テストありは
+  `<mode>.tests.md` / `<mode>.docs.tests.md`)
 - M365 Copilot Chat の実測(2026-09-12、設計書 §15.1): 添付ファイル内の指示は
   「埋め込み指示」として意図的に無視され、添付の読み取りでは空行・行末空白が
   落ちる。貼付は約 120K 文字が上限。よって手順文・規約文は本文用テキストで

@@ -177,7 +177,11 @@ WinForms + WebView2 + React([webview2-bridge](https://github.com/ishibashi0112/w
 - `extraRoots[].path`: ルート相対。**宣言されたディレクトリだけ**走査します
   (ディレクトリ走査をしない原則の、明示的でスコープの狭い例外)
 - `include` の既定: `kind: web` は `**/*.{ts,tsx,js,jsx,css,json,html}`、
-  `kind: contract` は `**/*.ts`、それ以外は `**/*`。`exclude` で追加除外
+  `kind: contract` は `**/*.ts`、`kind: test` は `**/*.{ts,tsx,json,md}`、
+  それ以外は `**/*`。`exclude` で追加除外
+- `kind: test`(例: `{ "path": "e2e", "kind": "test" }`)があるか、パックに
+  `e2e/` 配下または `*.spec.ts` / `*.test.ts` のファイルが含まれると、手順文に
+  「自動テスト」の節が入り、AI にテストの同梱を求めます(下記「作業手順の自動付与」)
 - `include` に関わらず常に除外: `node_modules/`、`dist/`、`build/`、`.vite/`、
   `*.map`、`.env*`、`.gitignore` / `.repomixignore` に一致するもの、バイナリ拡張子
 - 出力では `<directory_structure>` に `[web] apps/web/` のようにグループ表示し、
@@ -333,6 +337,18 @@ npx slnmix --task task.md --mode plan                    # → 方針と質問�
 npx slnmix --task task.md --mode implement --plan plan.md   # 承認した方針を <plan> として同梱
 ```
 
+### 自動テストがあるプロジェクト(v0.15.0〜)
+
+パックに `e2e/` 配下または `*.spec.ts` / `*.test.ts` のファイルがあるか、
+`slnmix.config.json` の `extraRoots` に `kind: "test"` があると、手順文の末尾に
+「自動テスト」の節が入ります(標準エラーに「自動テスト: あり(理由)」と出ます)。
+AI は変更した振る舞いに対応するテストを同じ changes.md に含め、観点は仕様書・設計書の
+決まった章(入力項目・操作一覧・処理フロー・業務ルール・エラー時)から読み取り、
+画面に足した要素には `data-testid` を付けます。テストの置き場は `e2e/screen/`(DB なし)・
+`e2e/api/`(契約メソッドと DB)・`e2e/host/`(画面から DB まで)の 3 層です
+(仕組みは [docs/HANDOFF-testing-2026-09.md](docs/HANDOFF-testing-2026-09.md))。
+**テストが無いプロジェクトでは手順文は従来と同一**で、AI にテストは求めません。
+
 ### 手順文のカスタマイズ(`procedure.md`)
 
 入力と同じフォルダに `procedure.md` があれば、内蔵既定文の代わりにその内容を
@@ -347,7 +363,8 @@ npx slnmix --print-procedure --mode plan                 # モード別の文面
 プロジェクト固有のルール(コーディング規約・禁止事項など)は
 `procedure.md` の末尾に追記する運用を想定しています。別ファイルは増やしません。
 書き出した文面の末尾にある `{{DOCS_SECTIONS}}` は残しておくと、docs 連携(下記)が
-有効なときに「文書の扱い」「チャットの継続と引継ぎ」の 2 節に置換されます。
+有効なときに「文書の扱い」「チャットの継続と引継ぎ」の 2 節に置換されます。同じく
+`{{TEST_SECTIONS}}` は自動テストがあるとき(上記)に「自動テスト」の節に置換されます。
 
 ## プロジェクト文書の連携(`docs/` — 設計書・仕様書・引継ぎ書)
 

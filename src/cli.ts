@@ -21,6 +21,7 @@ import {
 	PROCEDURE_VERSION,
 	renderBuiltinProcedure,
 } from "./assets/procedure";
+import { describeAutoTests, detectAutoTests } from "./autoTests";
 import { buildDesignerFileMatcher } from "./designerFileFilter";
 import { decideMode, describeDocs, resolveDocs, type DocsResolution } from "./docs";
 import { initDocs } from "./initDocs";
@@ -103,7 +104,8 @@ const USAGE = `slnmix — .sln / .vbproj の論理構成に基づく repomix 互
       --no-procedure    <procedure> を出さない(従来出力)
       --print-procedure 内蔵の作業手順文を標準出力に書いて終了(--mode 併用可。
                         カスタマイズする人は procedure.md へリダイレクトして編集。
-                        {{DOCS_SECTIONS}} は残しておくと docs 連携時に置換される)
+                        {{DOCS_SECTIONS}} は残しておくと docs 連携時に、
+                        {{TEST_SECTIONS}} は自動テストがあるときに置換される)
       --prompt-output <file>
                         チャット本文に貼る指示テキスト(<task> / <plan> / <procedure> /
                         <instruction>)の出力先(既定: パックと同じ場所の
@@ -319,6 +321,7 @@ function main(): number {
 		process.stdout.write(
 			renderBuiltinProcedure(explicitMode ?? DEFAULT_PROCEDURE_MODE, {
 				docs: "placeholder",
+				tests: "placeholder",
 			}),
 		);
 		return 0;
@@ -435,6 +438,54 @@ function main(): number {
 		console.error(`設定: ${config.sources.join(", ")}(${parts.join(" / ")})`);
 	}
 
+	// .gitignore / .repomixignore の尊重(本家 repomix と同じ既定挙動)
+	const gitignore = new GitignoreEvaluator(
+		{
+			readTextFileIfExists: (absolutePath) => {
+				try {
+					return fs.readFileSync(absolutePath, "utf8");
+				} catch {
+					return undefined;
+				}
+			},
+			directoryExists: (absolutePath) => {
+				try {
+					return fs.statSync(absolutePath).isDirectory();
+				} catch {
+					return false;
+				}
+			},
+		},
+		path.dirname(targetPath),
+	);
+
+	// パック本文を先に組み立てる。手順文の「自動テスト」の節は、実際に出力する
+	// ファイル一覧(と extraRoots の kind)から有無を判定するため(autoTests.ts)
+	const output = buildRepomixOutput(
+		path.basename(targetPath),
+		sources,
+		{
+			readTextFile: readSourceTextFile,
+			ignoreReasonFor: values["no-gitignore"]
+				? undefined
+				: (absolutePath) => gitignore.ignoreReasonFor(absolutePath),
+			listFilesRecursive: FS_DEPS.listFilesRecursive,
+		},
+		{
+			includeSensitive,
+			maskCredentials: !values["no-mask"],
+			strictMask: !values["no-strict-mask"],
+			uiSummary: !values["no-ui-summary"],
+			rootDir: values["legacy-paths"] ? undefined : rootDir,
+			extraRoots: config.extraRoots,
+			contractSchema: config.contractSchema,
+			contractFile: config.contractFile,
+			generatedDirs: config.generatedDirs,
+			includeGenerated: values["include-generated"],
+		},
+	);
+	printDiagnostics("出力", output.diagnostics);
+
 	// docs/ 連携: 文書を読み、作業モードと既定タスクを決める
 	let docs: DocsResolution | undefined;
 	let docsTail: DocsTail | undefined;
@@ -478,6 +529,11 @@ function main(): number {
 	}
 	console.error(`モード: ${mode}(${modeReason})`);
 
+	// 自動テストの有無(手順文 v6 の「自動テスト」の節を入れるか)。テストが無い
+	// プロジェクトでは手順文は v5 と同一
+	const autoTests = detectAutoTests(output.filePaths, config.extraRoots);
+	console.error(`自動テスト: ${describeAutoTests(autoTests)}`);
+
 	// petari 等の規約文(protocol.md)を出力末尾へ連結する(なければ従来どおり)
 	const instruction = resolveInstructionFile(
 		values["instruction-file"],
@@ -507,6 +563,7 @@ function main(): number {
 			disabled: values["no-procedure"],
 			mode,
 			docs: docs !== undefined,
+			tests: autoTests.present,
 		},
 		targetPath,
 		process.cwd(),
@@ -539,52 +596,6 @@ function main(): number {
 		process.stdout.write(promptText);
 		return 0;
 	}
-
-	// .gitignore / .repomixignore の尊重(本家 repomix と同じ既定挙動)
-	const gitignore = new GitignoreEvaluator(
-		{
-			readTextFileIfExists: (absolutePath) => {
-				try {
-					return fs.readFileSync(absolutePath, "utf8");
-				} catch {
-					return undefined;
-				}
-			},
-			directoryExists: (absolutePath) => {
-				try {
-					return fs.statSync(absolutePath).isDirectory();
-				} catch {
-					return false;
-				}
-			},
-		},
-		path.dirname(targetPath),
-	);
-
-	const output = buildRepomixOutput(
-		path.basename(targetPath),
-		sources,
-		{
-			readTextFile: readSourceTextFile,
-			ignoreReasonFor: values["no-gitignore"]
-				? undefined
-				: (absolutePath) => gitignore.ignoreReasonFor(absolutePath),
-			listFilesRecursive: FS_DEPS.listFilesRecursive,
-		},
-		{
-			includeSensitive,
-			maskCredentials: !values["no-mask"],
-			strictMask: !values["no-strict-mask"],
-			uiSummary: !values["no-ui-summary"],
-			rootDir: values["legacy-paths"] ? undefined : rootDir,
-			extraRoots: config.extraRoots,
-			contractSchema: config.contractSchema,
-			contractFile: config.contractFile,
-			generatedDirs: config.generatedDirs,
-			includeGenerated: values["include-generated"],
-		},
-	);
-	printDiagnostics("出力", output.diagnostics);
 
 	// 末尾に <task> / <plan> / <procedure> / <instruction>、先頭にリマインダの
 	// サンドイッチ配置(チャットの要約処理で末尾が落ちても冒頭が末尾へ誘導する)

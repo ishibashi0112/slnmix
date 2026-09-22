@@ -129,6 +129,8 @@ export interface ProcedureOptions {
 	mode: ProcedureMode;
 	/** docs/ 連携が有効か(手順文に文書の扱いと引継ぎの節を入れる) */
 	docs?: boolean;
+	/** 自動テストがあるか(手順文に「自動テスト」の節を入れる。autoTests.ts の判定) */
+	tests?: boolean;
 }
 
 /**
@@ -145,7 +147,7 @@ export function resolveProcedure(
 		return { kind: "none" };
 	}
 	const { mode } = options;
-	const render = { docs: options.docs === true };
+	const render = { docs: options.docs === true, tests: options.tests === true };
 	if (options.explicitPath !== undefined) {
 		const absolutePath = path.resolve(cwd, options.explicitPath);
 		const template = deps.readTextFile(absolutePath);

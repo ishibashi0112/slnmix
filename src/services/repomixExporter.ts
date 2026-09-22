@@ -128,6 +128,8 @@ export interface RepomixExportResult {
 	contractSummaryIncluded: boolean;
 	/** extraRoots の走査など、出力生成中の診断(呼び出し側が表示する) */
 	diagnostics: ParseDiagnostic[];
+	/** 出力した <file> の path 属性(出力順。自動テストの有無の判定に使う) */
+	filePaths: string[];
 }
 
 /**
@@ -463,6 +465,7 @@ export function buildRepomixOutput(
 	const maskedFiles: MaskedFile[] = [];
 	const diagnostics: ParseDiagnostic[] = [];
 	const outsideRootPaths: string[] = [];
+	const filePaths: string[] = [];
 	let fileCount = 0;
 	let totalChars = 0;
 	let uiSummaryCount = 0;
@@ -563,6 +566,7 @@ export function buildRepomixOutput(
 			fileEntries.push(
 				`<file path="${escapeAttribute(displayPath)}"${info.attrs}${conditionAttr}>\n${content}\n</file>`,
 			);
+			filePaths.push(displayPath);
 			fileCount += 1;
 			totalChars += content.length;
 		}
@@ -668,6 +672,7 @@ export function buildRepomixOutput(
 				fileEntries.push(
 					`<file path="${escapeAttribute(file.relativePath)}" root="${escapeAttribute(file.kind)}">\n${content}\n</file>`,
 				);
+				filePaths.push(file.relativePath);
 				fileCount += 1;
 				extraRootFileCount += 1;
 				totalChars += content.length;
@@ -815,5 +820,6 @@ export function buildRepomixOutput(
 		extraRootFileCount,
 		contractSummaryIncluded: contractPlaced,
 		diagnostics,
+		filePaths,
 	};
 }

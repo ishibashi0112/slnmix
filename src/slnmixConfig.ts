@@ -73,6 +73,8 @@ export interface SlnmixConfigResult {
 const DEFAULT_INCLUDE: Readonly<Record<string, readonly string[]>> = {
 	web: ["**/*.{ts,tsx,js,jsx,css,json,html}"],
 	contract: ["**/*.ts"],
+	/** 自動テスト(e2e/ 等)。kind: "test" があれば手順文に「自動テスト」の節が入る */
+	test: ["**/*.{ts,tsx,json,md}"],
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {

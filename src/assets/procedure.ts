@@ -30,9 +30,16 @@
  * v5 (2026-09-16): 完成済みプロジェクトの改修(文書が何もない)向けに、design モードで
  * 「既存の画面・機能の改修なら、設計書より先に改修対象に限った現状の仕様書(as-is)を
  * コードから起こす」を追加。設計書はその仕様書を参照して変更点を書く。
+ *
+ * v6 (2026-09-22、テスト戦略メモ §7): プロジェクトに自動テストがあるときだけ
+ * {{TEST_SECTIONS}} に「自動テスト」の節(テストを同じ changes.md で出す、観点は
+ * 仕様書・設計書から読み取る、data-testid、自己検証の追加項目)が入る。
+ * 自動テストの有無は cli.ts が判定する(autoTests.ts: パック内の e2e/ 配下と
+ * *.spec.ts / *.test.ts、または extraRoots の kind: "test")。無いときは空 =
+ * v5 と同じ本文(既存プロジェクトの出力を変えない)。
  */
 
-export const PROCEDURE_VERSION = 5;
+export const PROCEDURE_VERSION = 6;
 
 export const PROCEDURE_MODES = ["full", "plan", "implement", "design"] as const;
 export type ProcedureMode = (typeof PROCEDURE_MODES)[number];
@@ -44,8 +51,8 @@ export function isProcedureMode(value: string): value is ProcedureMode {
 }
 
 /**
- * {{MODE}} / {{MODE_SECTIONS}} / {{DOCS_SECTIONS}} を含むテンプレート
- * (procedure.md でも同じプレースホルダが使える)
+ * {{MODE}} / {{MODE_SECTIONS}} / {{DOCS_SECTIONS}} / {{TEST_SECTIONS}} を含む
+ * テンプレート(procedure.md でも同じプレースホルダが使える)
  */
 export const PROCEDURE_TEMPLATE = `<!-- slnmix procedure v${PROCEDURE_VERSION} (mode: {{MODE}}) -->
 # 作業手順
@@ -74,7 +81,7 @@ export const PROCEDURE_TEMPLATE = `<!-- slnmix procedure v${PROCEDURE_VERSION} (
 - 既存コードの流儀(命名・エラー処理・DB アクセスの書き方)に合わせてください。パック内に同種の処理があれば、それを手本にしてください
 - Option Strict On を前提に、型変換は明示してください
 - 影響範囲は最小にしてください。求められていないリファクタリングはしないでください
-{{DOCS_SECTIONS}}`;
+{{DOCS_SECTIONS}}{{TEST_SECTIONS}}`;
 
 // ---- 「回答の構成」の部品。モードごとに番号を振って組み立てる ----
 
@@ -194,6 +201,34 @@ export const DOCS_SECTIONS = `
 - 引継ぎ書には規約・手順のコピーやコードの一覧を書かないでください。次のチャットにはツールが最新のパックと指示を付けます
 `;
 
+/**
+ * 自動テストがあるプロジェクトでだけ手順文の末尾に付く節(v6、テスト戦略メモ §7-1)。
+ * テストを同じ changes.md で出させ、観点は仕様書・設計書の決まった章から読み取らせる
+ * (ユーザーにテスト要件を聞かない)。有無の判定は autoTests.ts。
+ */
+export const TEST_SECTIONS = `
+## 自動テスト
+
+- このプロジェクトには自動テストがあります(パック内の e2e/ 配下と *.spec.ts / *.test.ts)。コードの変更を提案するときは、変更した振る舞いに対応するテストを同じ changes.md に含めてください。テストを出さない場合は、変更の説明に理由を 1 行書いてください
+- テストの置き場は 3 層です。DB を触らない画面の振る舞いは e2e/screen/、契約メソッドの応答と DB 更新は e2e/api/、画面から DB までの通しは e2e/host/ に置きます。関数単位のテストは対象ファイルの隣の *.test.ts です
+- 既存のテストが手本です。同じ型に合わせてください: Arrange(前提データ) / Act(操作) / Assert(確認) の 3 段、要素は data-testid で指す、前提行は testId 接頭辞を付けて自分で入れる、DB の変化は db.snapshot と db.diff で見る
+- テストの観点はユーザーに聞かず、次の文書から読み取ってください。文書に書かれていない振る舞いはテストにせず、確認事項(文書が無ければ質問)に回してください。文書が無い改修では、コードから読み取れる振る舞いだけをテストにします
+
+| 読み取り元 | 観点 | 層 |
+|---|---|---|
+| 仕様書 §3-3 入力項目 / 設計書 §4-2 入力項目と検証 | 必須・桁・形式・範囲の検証と、そのエラー表示 | screen |
+| 仕様書 §3-2 操作一覧 / 設計書 §4-3 操作と活性条件 | ボタン・メニューの活性条件 | screen |
+| 仕様書 §4 機能一覧・§5 処理フロー / 設計書 §5 処理仕様 | 機能ごとの正常系の通し、契約メソッドごとの応答と DB 更新 | host / api |
+| 仕様書 §7 業務ルール・制約 / 設計書 §3-3 キー・採番・突き合わせの規則 | ルール違反時の拒否、採番の形式 | api |
+| 仕様書 §8 エラー時・0 件時 / 設計書 §8 エラー処理・0 件時の方針 | 0 件表示、失敗時のメッセージ、ロールバック | screen / api |
+| 設計書 §5-3 トランザクション・排他・監査列 | 監査列の更新、二重登録の防止 | api |
+
+- 画面に追加した要素には data-testid="<画面>-<役割>"(例: order-submit)を付けてください。テストは文言や CSS で要素を選びません
+- テストは既存データに依存させず、本番データを前提にしないでください
+- 自己検証に次の 2 項目を加えてください: 「変更した振る舞いにテストがあるか(ないなら理由)」「画面に追加した要素に data-testid を付けたか」
+- design モードでは、設計書 §9 の各バッチの完了条件を「自動テスト」と「手動確認」に分け、自動テストは上の表で読み取った観点を e2e/<層>/<画面>.spec.ts のファイル名で挙げてください
+`;
+
 export interface RenderProcedureOptions {
 	/**
 	 * docs/ 連携が有効か({{DOCS_SECTIONS}} に文書の扱いと引継ぎの節を入れる)。
@@ -201,25 +236,40 @@ export interface RenderProcedureOptions {
 	 * 残しておけば実行時に設定に応じて置換される)
 	 */
 	docs?: boolean | "placeholder";
+	/**
+	 * 自動テストがあるか({{TEST_SECTIONS}} に「自動テスト」の節を入れる)。
+	 * "placeholder" は docs と同じくプレースホルダを残す
+	 */
+	tests?: boolean | "placeholder";
 }
 
 /**
- * テンプレートの {{MODE}} / {{MODE_SECTIONS}} / {{DOCS_SECTIONS}} をモードに
- * 応じて置換する。プレースホルダがなければそのまま返す(procedure.md による
- * 上書きで使う)。docs が無効なら {{DOCS_SECTIONS}} は空文字になる。
+ * テンプレートの {{MODE}} / {{MODE_SECTIONS}} / {{DOCS_SECTIONS}} / {{TEST_SECTIONS}}
+ * をモードと設定に応じて置換する。プレースホルダがなければそのまま返す
+ * (procedure.md による上書きで使う)。docs / tests が無効ならそれぞれの
+ * プレースホルダは空文字になる。
  */
 export function renderProcedureTemplate(
 	template: string,
 	mode: ProcedureMode,
 	options: RenderProcedureOptions = {},
 ): string {
-	const rendered = template
+	let rendered = template
 		.replaceAll("{{MODE_SECTIONS}}", MODE_SECTIONS[mode])
 		.replaceAll("{{MODE}}", mode);
-	if (options.docs === "placeholder") {
-		return rendered;
+	if (options.docs !== "placeholder") {
+		rendered = rendered.replaceAll(
+			"{{DOCS_SECTIONS}}",
+			options.docs === true ? DOCS_SECTIONS : "",
+		);
 	}
-	return rendered.replaceAll("{{DOCS_SECTIONS}}", options.docs === true ? DOCS_SECTIONS : "");
+	if (options.tests !== "placeholder") {
+		rendered = rendered.replaceAll(
+			"{{TEST_SECTIONS}}",
+			options.tests === true ? TEST_SECTIONS : "",
+		);
+	}
+	return rendered;
 }
 
 /** 内蔵既定文をモードに応じて描画する */

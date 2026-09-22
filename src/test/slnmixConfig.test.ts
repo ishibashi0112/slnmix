@@ -145,6 +145,25 @@ suite("slnmixConfig: webview2-bridge.gen.json の自動検出", () => {
 	test("normalizeRootRelative: 区切りを / にし、先頭 ./ と末尾 / を落とす", () => {
 		assert.strictEqual(normalizeRootRelative(".\\apps\\web\\"), "apps/web");
 	});
+
+	test("kind: \"test\" の include 既定は **/*.{ts,tsx,json,md}(テスト戦略メモ §7-3)", () => {
+		assert.deepStrictEqual(defaultIncludeFor("test"), ["**/*.{ts,tsx,json,md}"]);
+		const result = loadSlnmixConfig(
+			ROOT,
+			fakeDeps({
+				"slnmix.config.json": JSON.stringify({
+					extraRoots: [{ path: "e2e", kind: "test" }],
+				}),
+			}),
+		);
+		assert.deepStrictEqual(result.diagnostics, []);
+		assert.deepStrictEqual(result.config.extraRoots, [
+			{ path: "e2e", kind: "test", include: ["**/*.{ts,tsx,json,md}"], exclude: [] },
+		]);
+		// 既定は毎回コピーを返す(呼び出し側が書き換えても既定は変わらない)
+		defaultIncludeFor("test").push("x");
+		assert.deepStrictEqual(defaultIncludeFor("test"), ["**/*.{ts,tsx,json,md}"]);
+	});
 });
 
 suite("slnmixConfig: docs(フェーズ 6)", () => {
