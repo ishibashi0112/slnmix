@@ -47,6 +47,11 @@ export interface DocsConfig {
 }
 
 export interface SlnmixConfig {
+	/**
+	 * 入力(.sln / .vbproj)のルート相対パス。引数なしの `npx slnmix` がこれを使う
+	 * (web + dotnet を分けた構成で .sln がサブディレクトリにあるとき用)
+	 */
+	target?: string;
 	extraRoots: ExtraRootConfig[];
 	/** docs/ 連携の設定(なければ undefined = 連携なし) */
 	docs?: DocsConfig;
@@ -267,8 +272,41 @@ function parseDocsConfig(
 	return { design: pick("design"), spec: pick("spec"), handoff: pick("handoff") };
 }
 
+const TARGET_EXTENSION = /\.(sln|vbproj)$/i;
+
+/** `target`: ルート配下の相対パスで .sln / .vbproj を指す。それ以外は警告して無視 */
+function parseTarget(value: unknown, diagnostics: ParseDiagnostic[]): string | undefined {
+	if (value === undefined) {
+		return undefined;
+	}
+	const text = asString(value);
+	if (text === undefined || text.trim() === "") {
+		diagnostics.push({
+			severity: "warning",
+			message: `${CONFIG_FILE_NAME}: target は文字列で指定してください(無視します)`,
+		});
+		return undefined;
+	}
+	const normalized = normalizeRootRelative(text);
+	if (normalized === "" || normalized.startsWith("../") || path.isAbsolute(text)) {
+		diagnostics.push({
+			severity: "warning",
+			message: `${CONFIG_FILE_NAME}: target はルート配下の相対パスで指定してください: ${text}(無視します)`,
+		});
+		return undefined;
+	}
+	if (!TARGET_EXTENSION.test(normalized)) {
+		diagnostics.push({
+			severity: "warning",
+			message: `${CONFIG_FILE_NAME}: target は .sln / .vbproj を指定してください: ${text}(無視します)`,
+		});
+		return undefined;
+	}
+	return normalized;
+}
+
 /**
- * @param rootDir ルート(.sln / .vbproj のあるディレクトリ)の絶対パス
+ * @param rootDir ルート(slnmix.config.json のあるディレクトリ。無ければ .sln / .vbproj のあるディレクトリ)の絶対パス
  */
 export function loadSlnmixConfig(
 	rootDir: string,
@@ -304,6 +342,10 @@ export function loadSlnmixConfig(
 		}
 		if (isRecord(parsed)) {
 			config.sources.push(CONFIG_FILE_NAME);
+			const target = parseTarget(parsed["target"], diagnostics);
+			if (target !== undefined) {
+				config.target = target;
+			}
 			config.extraRoots = parseExtraRoots(parsed["extraRoots"], diagnostics);
 			config.docs = parseDocsConfig(parsed["docs"], diagnostics);
 			const schema = asString(parsed["contractSchema"]);

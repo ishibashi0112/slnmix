@@ -29,7 +29,6 @@ import {
 
 const CWD = path.resolve("/work/app");
 const PROJECT_DIR = path.resolve("/work/project");
-const TARGET = path.join(PROJECT_DIR, "App.sln");
 
 function fakeDeps(files: Record<string, string>): InstructionFileDeps {
 	const map = new Map(
@@ -124,7 +123,7 @@ suite("procedureFile: resolveProcedure", () => {
 	test("--no-procedure なら none", () => {
 		const deps = fakeDeps({ "/work/project/procedure.md": "独自\n" });
 		assert.deepStrictEqual(
-			resolveProcedure({ disabled: true, mode: "full" }, TARGET, CWD, deps),
+			resolveProcedure({ disabled: true, mode: "full" }, PROJECT_DIR, CWD, deps),
 			{ kind: "none" },
 		);
 	});
@@ -132,7 +131,7 @@ suite("procedureFile: resolveProcedure", () => {
 	test("procedure.md がなければ内蔵既定文(モード反映)", () => {
 		for (const mode of ["full", "plan", "implement"] as const) {
 			assert.deepStrictEqual(
-				resolveProcedure({ disabled: false, mode }, TARGET, CWD, fakeDeps({})),
+				resolveProcedure({ disabled: false, mode }, PROJECT_DIR, CWD, fakeDeps({})),
 				{ kind: "builtin", mode, content: renderBuiltinProcedure(mode) },
 			);
 		}
@@ -144,7 +143,7 @@ suite("procedureFile: resolveProcedure", () => {
 			"/work/app/procedure.md": "こちらは読まれない\n",
 		});
 		assert.deepStrictEqual(
-			resolveProcedure({ disabled: false, mode: "plan" }, TARGET, CWD, deps),
+			resolveProcedure({ disabled: false, mode: "plan" }, PROJECT_DIR, CWD, deps),
 			{
 				kind: "file",
 				path: path.join(PROJECT_DIR, "procedure.md"),
@@ -160,7 +159,7 @@ suite("procedureFile: resolveProcedure", () => {
 		});
 		const result = resolveProcedure(
 			{ disabled: false, mode: "implement" },
-			TARGET,
+			PROJECT_DIR,
 			CWD,
 			deps,
 		);
@@ -179,7 +178,7 @@ suite("procedureFile: resolveProcedure", () => {
 		assert.deepStrictEqual(
 			resolveProcedure(
 				{ explicitPath: "docs/proc.md", disabled: false, mode: "full" },
-				TARGET,
+				PROJECT_DIR,
 				CWD,
 				deps,
 			),
@@ -195,7 +194,7 @@ suite("procedureFile: resolveProcedure", () => {
 	test("--procedure-file が読めなければエラー(黙って内蔵文にしない)", () => {
 		const result = resolveProcedure(
 			{ explicitPath: "missing.md", disabled: false, mode: "full" },
-			TARGET,
+			PROJECT_DIR,
 			CWD,
 			fakeDeps({}),
 		);

@@ -24,6 +24,9 @@
 
 設計から始めるか、実装の続きか、引継ぎ書を書くかは slnmix と AI が決めます。
 あなたが打つコマンドは `npx slnmix` と `npx petari` (テストがあれば `pnpm test:all`) だけです。
+web と dotnet を分けたアプリ (webview2-bridge の雛形。`.sln` は `dotnet/` の下) でも同じです。
+雛形に同梱の `slnmix.config.json` (`target` と `extraRoots`) がアプリのルートにあるので、
+そこで `npx slnmix` と打てばアプリのルート基準のパックになり、petari のルートと一致します。
 
 ## 1. 登場するもの
 

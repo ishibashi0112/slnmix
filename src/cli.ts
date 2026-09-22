@@ -37,7 +37,7 @@ import {
 } from "./procedureFile";
 import { maskCredentials } from "./services/credentialMasker";
 import { GitignoreEvaluator } from "./services/gitignoreService";
-import { loadSlnmixConfig } from "./slnmixConfig";
+import { CONFIG_FILE_NAME, loadSlnmixConfig } from "./slnmixConfig";
 import {
 	buildRepomixOutput,
 	decodeSourceBuffer,
@@ -45,6 +45,7 @@ import {
 } from "./services/repomixExporter";
 import { parseSln } from "./slnParser";
 import { resolveTarget } from "./targetResolver";
+import { describeRootReason, resolveRoot } from "./rootResolver";
 import type { ParseDiagnostic } from "./types";
 import { parseVbproj } from "./vbprojParser";
 
@@ -55,9 +56,17 @@ const USAGE = `slnmix — .sln / .vbproj の論理構成に基づく repomix 互
 
   入力を省略するとカレントディレクトリ(ディレクトリ指定ならその直下)の
   *.sln を自動検出します(なければ *.vbproj。複数ある場合は候補を表示)。
+  その場所の slnmix.config.json に "target": "dotnet/App.sln" があればそれを使います。
+
+  ルート(<file path> の基準。設定ファイル・protocol.md・docs/・出力先もここ)は
+  --root > 入力のディレクトリから上に向かって最初に見つかる slnmix.config.json の
+  場所(.git のあるディレクトリより上には行かない)> 入力と同じ場所、の順です。
+  web と dotnet を分けた構成では、アプリのルートに slnmix.config.json を置けば
+  .sln が dotnet/ にあってもアプリのルート基準になります。
 
 オプション:
-  -o, --output <file>   出力先(既定: 入力と同じ場所の repomix-output.xml)
+  -o, --output <file>   出力先(既定: ルートの repomix-output.xml)
+      --root <dir>      ルートを明示する(入力はその配下にあること)
       --stdout          ファイルではなく標準出力へ書く(BOM なし)
       --include-designer  Designer 関連ファイル(*.Designer.vb 等)を原文のまま含める
       --include-designer-file <名前|パターン>
@@ -79,7 +88,7 @@ const USAGE = `slnmix — .sln / .vbproj の論理構成に基づく repomix 互
                         で代替)
       --instruction-file <path>
                         出力末尾に <instruction> として連結する規約文ファイルを
-                        明示指定(既定: 入力と同じ場所の protocol.md を自動検出。
+                        明示指定(既定: ルートの protocol.md を自動検出。
                         petari init が生成する規約文を想定)
       --task <file|text>  依頼内容を出力末尾に <task> として同梱する。ファイルが
                         存在すれば読み込み、なければ文字列として扱う
@@ -99,7 +108,7 @@ const USAGE = `slnmix — .sln / .vbproj の論理構成に基づく repomix 互
                         docs/README.md を作り slnmix.config.json に docs 設定を追記)
       --plan <file>     implement モードで承認済みの方針を <plan> として同梱する
       --procedure-file <path>
-                        作業手順文を明示指定(既定: 入力と同じ場所の procedure.md を
+                        作業手順文を明示指定(既定: ルートの procedure.md を
                         自動検出。なければ内蔵既定文)
       --no-procedure    <procedure> を出さない(従来出力)
       --print-procedure 内蔵の作業手順文を標準出力に書いて終了(--mode 併用可。
@@ -282,6 +291,7 @@ function main(): number {
 			"no-strict-mask": { type: "boolean", default: false },
 			"no-gitignore": { type: "boolean", default: false },
 			"legacy-paths": { type: "boolean", default: false },
+			root: { type: "string" },
 			"include-generated": { type: "boolean", default: false },
 			"instruction-file": { type: "string" },
 			task: { type: "string" },
@@ -353,6 +363,9 @@ function main(): number {
 			}
 		},
 		listFileNames: FS_DEPS.listFileNames,
+		// 引数なし(またはディレクトリ指定)のとき、その場所の slnmix.config.json の target を使う
+		readConfigTarget: (directory) =>
+			loadSlnmixConfig(directory, { readTextFile: readSourceTextFile }).config.target,
 	});
 	if (resolution.kind === "error") {
 		console.error(resolution.message);
@@ -361,12 +374,42 @@ function main(): number {
 	}
 	const targetPath = resolution.path;
 	if (resolution.autoDetected) {
-		console.error(`対象: ${targetPath}(自動検出)`);
+		console.error(
+			`対象: ${targetPath}(${resolution.source === "config" ? `${CONFIG_FILE_NAME} の target` : "自動検出"})`,
+		);
+	}
+
+	// ルート = 物理パス・設定ファイル・protocol.md / procedure.md・docs/・出力先の基準。
+	// --root > 上位の slnmix.config.json の場所 > 入力と同じ場所(rootResolver.ts)
+	const root = resolveRoot(targetPath, values.root, process.cwd(), {
+		isDirectory: (p) => {
+			try {
+				return fs.statSync(p).isDirectory();
+			} catch {
+				return false;
+			}
+		},
+		isFile: (p) => {
+			try {
+				return fs.statSync(p).isFile();
+			} catch {
+				return false;
+			}
+		},
+		exists: (p) => fs.existsSync(p),
+	});
+	if (root.kind === "error") {
+		console.error(root.message);
+		return 1;
+	}
+	const rootDir = root.rootDir;
+	if (root.reason !== "target") {
+		console.error(`ルート: ${rootDir}(${describeRootReason(root.reason)})`);
 	}
 
 	// docs/ 連携の初回セットアップ(パックは作らない)
 	if (values["init-docs"]) {
-		const result = initDocs(path.dirname(targetPath), {
+		const result = initDocs(rootDir, {
 			exists: (p) => fs.existsSync(p),
 			readTextFile: readSourceTextFile,
 			writeTextFile: (p, content) => fs.writeFileSync(p, content, "utf8"),
@@ -421,9 +464,7 @@ function main(): number {
 		}
 	}
 
-	// ルート = 入力(.sln / .vbproj)のあるディレクトリ。物理パス・設定ファイル・
-	// protocol.md / procedure.md・.gitignore の基準をすべてここに揃える
-	const rootDir = path.dirname(targetPath);
+	// 設定ファイルはルートから読む(物理パス・protocol.md / procedure.md・.gitignore・docs/ も同じ基準)
 	const configResult = loadSlnmixConfig(rootDir, { readTextFile: readSourceTextFile });
 	printDiagnostics("slnmix.config.json", configResult.diagnostics);
 	const config = configResult.config;
@@ -456,7 +497,7 @@ function main(): number {
 				}
 			},
 		},
-		path.dirname(targetPath),
+		rootDir,
 	);
 
 	// パック本文を先に組み立てる。手順文の「自動テスト」の節は、実際に出力する
@@ -537,7 +578,7 @@ function main(): number {
 	// petari 等の規約文(protocol.md)を出力末尾へ連結する(なければ従来どおり)
 	const instruction = resolveInstructionFile(
 		values["instruction-file"],
-		targetPath,
+		rootDir,
 		process.cwd(),
 		{ readTextFile: readSourceTextFile },
 	);
@@ -565,7 +606,7 @@ function main(): number {
 			docs: docs !== undefined,
 			tests: autoTests.present,
 		},
-		targetPath,
+		rootDir,
 		process.cwd(),
 		textDeps,
 	);
@@ -576,7 +617,7 @@ function main(): number {
 
 	// パックの出力先(--stdout のときはファイル名の表示用にのみ使う)
 	const outputPath = path.resolve(
-		values.output ?? path.join(path.dirname(targetPath), "repomix-output.xml"),
+		values.output ?? path.join(rootDir, "repomix-output.xml"),
 	);
 	const promptTail = {
 		task,

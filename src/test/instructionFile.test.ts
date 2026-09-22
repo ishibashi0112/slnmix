@@ -13,7 +13,7 @@ import {
 } from "../instructionFile";
 
 const CWD = path.resolve("/work/app");
-const TARGET = path.join(path.resolve("/work/project"), "App.sln");
+const PROJECT_DIR = path.resolve("/work/project");
 
 /** files: 絶対パス → 内容。それ以外は undefined(存在しない) */
 function fakeDeps(files: Record<string, string>): InstructionFileDeps {
@@ -29,7 +29,7 @@ suite("instructionFile: protocol.md の自動検出", () => {
 			"/work/project/protocol.md": "# petari protocol\n規約本文\n",
 			"/work/app/protocol.md": "こちらは読まれない\n",
 		});
-		const result = resolveInstructionFile(undefined, TARGET, CWD, deps);
+		const result = resolveInstructionFile(undefined, PROJECT_DIR, CWD, deps);
 		assert.deepStrictEqual(result, {
 			kind: "found",
 			path: path.join(path.resolve("/work/project"), "protocol.md"),
@@ -38,7 +38,7 @@ suite("instructionFile: protocol.md の自動検出", () => {
 	});
 
 	test("protocol.md がなければ none(エラーにしない)。探索先を返す", () => {
-		const result = resolveInstructionFile(undefined, TARGET, CWD, fakeDeps({}));
+		const result = resolveInstructionFile(undefined, PROJECT_DIR, CWD, fakeDeps({}));
 		assert.deepStrictEqual(result, {
 			kind: "none",
 			searchedPath: path.join(path.resolve("/work/project"), "protocol.md"),
@@ -52,7 +52,7 @@ suite("instructionFile: --instruction-file 指定", () => {
 			"/work/app/docs/rules.md": "明示指定の規約\n",
 			"/work/project/protocol.md": "こちらは読まれない\n",
 		});
-		const result = resolveInstructionFile("docs/rules.md", TARGET, CWD, deps);
+		const result = resolveInstructionFile("docs/rules.md", PROJECT_DIR, CWD, deps);
 		assert.deepStrictEqual(result, {
 			kind: "found",
 			path: path.join(CWD, "docs", "rules.md"),
@@ -61,7 +61,7 @@ suite("instructionFile: --instruction-file 指定", () => {
 	});
 
 	test("明示指定のファイルが読めなければエラー(黙って規約なしにしない)", () => {
-		const result = resolveInstructionFile("missing.md", TARGET, CWD, fakeDeps({}));
+		const result = resolveInstructionFile("missing.md", PROJECT_DIR, CWD, fakeDeps({}));
 		assert.strictEqual(result.kind, "error");
 		assert.ok(result.kind === "error" && result.message.includes("missing.md"));
 	});

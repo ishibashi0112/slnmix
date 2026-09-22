@@ -1,4 +1,4 @@
-<!-- status: ready (2026-09-22 ユーザー承認。A / B (実装) / C は同日実装済み。会社 PC での B の確認と、§11 確認事項 8 (slnmix のルートと雛形の配置) が残り) -->
+<!-- status: ready (2026-09-22 ユーザー承認。A / B (実装) / C と確認事項 8 (slnmix のルート解決) は同日実装済み。残りは会社 PC での B の確認) -->
 # 動作確認の自動化 — テスト戦略 設計メモ v0.2 (2026-09-22)
 
 ## 0. この文書の位置づけ
@@ -403,12 +403,13 @@ Copilot は実行できないので、Copilot 開発でのテストは「Copilot
 - `extraRoots` の `kind: "test"` に既定の include (`**/*.{ts,tsx,json,md}`) を足す
   (`slnmixConfig.ts` の `DEFAULT_INCLUDE`)。雛形が生成する設定に
   `{ "path": "e2e", "kind": "test" }` を含める
-- **未解決 (2026-09-22 実装時に判明)**: slnmix のルートは `.sln` のあるディレクトリで、
-  webview2-bridge の雛形は `dotnet/MyApp.sln` に置いているため、`web/` `contract/` `e2e/` が
-  ルート外になり extraRoots に入れられない (slnmix 決定ログ 2026-09-12 の「`.sln` が
-  リポジトリ直下にない構成が実際に出てきたら再検討」の事例)。雛形の `.sln` をルートに
-  移すか、slnmix に `root` 設定を足すか、要判断 (§11 確認事項 8)。雛形への
-  `slnmix.config.json` 同梱はこの判断の後
+- **解決 (2026-09-22 承認・実装、slnmix v0.16.0)**: ルートを「`--root` > 入力のディレクトリから
+  上に向かって最初に見つかる `slnmix.config.json` の場所 (`.git` より上には行かない) >
+  入力のディレクトリ」で決めるようにし、設定に `target` (ルート相対の .sln) を足した。
+  雛形は `slnmix.config.json` (`target: "dotnet/MyApp.sln"`、extraRoots `web` / `contract` /
+  `e2e` (kind test)) を同梱し、アプリのルートで `npx slnmix` と打つだけで動く。物理パスは
+  `dotnet/MyApp.Impl/X.vb` の形になり petari のルートと一致する。`.sln` を動かす案は
+  新規アプリしか直らないため不採用 (slnmix 決定ログ 2026-09-22)
 - パックが 120K を超えるときは `--focus` で対象画面のテストだけを全文にする
   (既存機構。テスト固有の対応は不要)
 
@@ -530,7 +531,7 @@ A / B (SQLite まで) / C は Claude Code だけで完結する。B の会社 PC
 | 5 | 済 | 旧 WinForms のみのプロジェクトを対象外とする | 2026-09-22 承認 |
 | 6 | 済 | VB にテストコードを書かない | 2026-09-22 確定 |
 | 7 | 済 | npm install が会社 PC で可能 | 2026-09-22 確認 |
-| 8 | 必須 | slnmix のルート (`.sln` の場所) と雛形の配置 (`dotnet/MyApp.sln`) が噛み合わない (§7-3)。雛形の `.sln` をルートへ移すか、slnmix に `root` 設定を足すか | Copilot 開発で雛形アプリを扱う前に |
+| 8 | 済 | slnmix のルート (`.sln` の場所) と雛形の配置 (`dotnet/MyApp.sln`) が噛み合わない (§7-3) | 2026-09-22 slnmix にルート解決 (`--root` / 設定ファイルの位置 / `target`) を実装、雛形に `slnmix.config.json` を同梱 |
 
 ## 12. 決定事項 (2026-09-22 承認済み)
 

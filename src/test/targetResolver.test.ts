@@ -118,3 +118,45 @@ suite("targetResolver: 自動検出", () => {
 		assert.ok(result.kind === "error" && result.message.includes("読み取れません"));
 	});
 });
+
+suite("targetResolver: slnmix.config.json の target", () => {
+	const dirs = { "/work/app": ["slnmix.config.json", "package.json"], "/work/app/dotnet": ["App.sln"] };
+	const withTarget = (target: string | undefined): TargetResolverDeps => ({
+		...fakeDeps(dirs),
+		readConfigTarget: (dir) => (dir === CWD ? target : undefined),
+	});
+
+	test("引数なし: 設定の target を使う(autoDetected、source: config)", () => {
+		const result = resolveTarget(undefined, CWD, withTarget("dotnet/App.sln"));
+		assert.deepStrictEqual(result, {
+			kind: "file",
+			path: path.join(CWD, "dotnet", "App.sln"),
+			autoDetected: true,
+			source: "config",
+		});
+	});
+
+	test("ディレクトリ指定でも設定の target を使う", () => {
+		const result = resolveTarget(".", CWD, withTarget("dotnet/App.sln"));
+		assert.ok(result.kind === "file" && result.source === "config");
+	});
+
+	test("target のファイルが無ければエラー", () => {
+		const result = resolveTarget(undefined, CWD, withTarget("dotnet/Missing.sln"));
+		assert.ok(result.kind === "error" && result.message.includes("target が見つかりません"));
+	});
+
+	test("target が .sln / .vbproj でなければエラー", () => {
+		const deps: TargetResolverDeps = {
+			...fakeDeps({ "/work/app": ["slnmix.config.json", "package.json"] }),
+			readConfigTarget: () => "package.json",
+		};
+		const result = resolveTarget(undefined, CWD, deps);
+		assert.ok(result.kind === "error" && result.message.includes(".sln / .vbproj を指定"));
+	});
+
+	test("設定に target が無ければ従来どおり直下を探す", () => {
+		const result = resolveTarget(undefined, CWD, withTarget(undefined));
+		assert.ok(result.kind === "error" && result.message.includes("見つかりません"));
+	});
+});

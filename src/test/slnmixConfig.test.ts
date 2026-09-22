@@ -219,3 +219,35 @@ suite("slnmixConfig: docs(フェーズ 6)", () => {
 		assert.strictEqual(diagnostics.length, 1);
 	});
 });
+
+suite("slnmixConfig: target", () => {
+	test("ルート相対の .sln を読む(/ 区切りに正規化)", () => {
+		const result = loadSlnmixConfig(
+			ROOT,
+			fakeDeps({ "slnmix.config.json": JSON.stringify({ target: "dotnet\\\\App.sln" }) }),
+		);
+		assert.strictEqual(result.config.target, "dotnet/App.sln");
+		assert.deepStrictEqual(result.diagnostics, []);
+	});
+
+	test("無ければ target キーを持たない", () => {
+		const result = loadSlnmixConfig(ROOT, fakeDeps({ "slnmix.config.json": "{}" }));
+		assert.ok(!("target" in result.config));
+	});
+
+	test("文字列以外・ルート外・拡張子違いは警告して無視", () => {
+		for (const [target, fragment] of [
+			[123, "文字列で"],
+			["../other/App.sln", "ルート配下"],
+			["/abs/App.sln", "ルート配下"],
+			["dotnet/readme.txt", ".sln / .vbproj"],
+		] as const) {
+			const result = loadSlnmixConfig(
+				ROOT,
+				fakeDeps({ "slnmix.config.json": JSON.stringify({ target }) }),
+			);
+			assert.strictEqual(result.config.target, undefined, String(target));
+			assert.ok(result.diagnostics.some((d) => d.message.includes(fragment)), String(target));
+		}
+	});
+});

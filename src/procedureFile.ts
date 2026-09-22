@@ -134,12 +134,12 @@ export interface ProcedureOptions {
 }
 
 /**
- * @param targetPath 解決済みの入力(.sln / .vbproj)の絶対パス
+ * @param rootDir 既定の procedure.md を探すディレクトリ(ルート)
  * @param cwd 実行時のカレントディレクトリ(explicitPath の解決基準)
  */
 export function resolveProcedure(
 	options: ProcedureOptions,
-	targetPath: string,
+	rootDir: string,
 	cwd: string,
 	deps: InstructionFileDeps,
 ): ProcedureResolution {
@@ -165,7 +165,7 @@ export function resolveProcedure(
 		};
 	}
 	const searchedPath = path.join(
-		path.dirname(targetPath),
+		rootDir,
 		DEFAULT_PROCEDURE_FILE_NAME,
 	);
 	const template = deps.readTextFile(searchedPath);

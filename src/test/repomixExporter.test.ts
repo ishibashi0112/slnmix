@@ -715,3 +715,54 @@ suite("repomixExporter: relativeWithinRoot", () => {
 		assert.strictEqual(relativeWithinRoot(path.resolve("/work/repo"), "\\\\server\\share\\x.vb"), undefined);
 	});
 });
+
+suite("repomixExporter: ルートが .sln より上にある構成(nested-root fixture)", () => {
+	const rootDir = path.join(FIXTURES_ROOT, "nested-root");
+	const projectPath = path.join(rootDir, "dotnet", "App", "App.vbproj");
+	const parseResult = parseVbproj(fs.readFileSync(projectPath, "utf8"), projectPath, {
+		fileExists: (p) => fs.existsSync(p),
+	});
+	const listFilesRecursive = (dir: string): string[] | undefined => {
+		const out: string[] = [];
+		const walk = (d: string): void => {
+			for (const entry of fs.readdirSync(d, { withFileTypes: true })) {
+				const full = path.join(d, entry.name);
+				if (entry.isDirectory()) {
+					walk(full);
+				} else if (entry.isFile()) {
+					out.push(full);
+				}
+			}
+		};
+		walk(dir);
+		return out.sort();
+	};
+	const result = buildRepomixOutput(
+		"App.sln",
+		[{ label: "App", parseResult }],
+		{
+			readTextFile: (p) => fs.readFileSync(p, "utf8"),
+			listFilesRecursive,
+		},
+		{
+			includeSensitive: false,
+			maskCredentials: false,
+			rootDir,
+			extraRoots: [
+				{ path: "web", kind: "web", include: ["**/*.ts"], exclude: [] },
+				{ path: "e2e", kind: "test", include: ["**/*.ts"], exclude: [] },
+			],
+		},
+	);
+
+	test("VB の物理パスはルート相対になり、dotnet/ の接頭辞が付く", () => {
+		assert.ok(result.content.includes('<file path="dotnet/App/Module1.vb"'), result.content);
+		assert.ok(!result.content.includes("outside_root"), "ルート外扱いになっている");
+	});
+
+	test("ルート直下の web / e2e が extraRoots として同じパックに入る", () => {
+		assert.ok(result.content.includes('<file path="web/src/main.ts" root="web">'));
+		assert.ok(result.content.includes('<file path="e2e/screen/main.spec.ts" root="test">'));
+		assert.ok(result.filePaths.includes("e2e/screen/main.spec.ts"));
+	});
+});

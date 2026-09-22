@@ -11,16 +11,22 @@
  */
 
 import * as path from "path";
+import { CONFIG_FILE_NAME } from "./slnmixConfig";
 
 export interface TargetResolverDeps {
 	isDirectory(absolutePath: string): boolean;
 	isFile(absolutePath: string): boolean;
 	/** ディレクトリ直下のファイル名一覧(取得できなければ undefined) */
 	listFileNames(absolutePath: string): string[] | undefined;
+	/**
+	 * そのディレクトリの slnmix.config.json の `target`(未設定なら undefined)。
+	 * 省略時は設定ファイルを見ない
+	 */
+	readConfigTarget?(directory: string): string | undefined;
 }
 
 export type TargetResolution =
-	| { kind: "file"; path: string; autoDetected: boolean }
+	| { kind: "file"; path: string; autoDetected: boolean; source?: "config" }
 	| { kind: "error"; message: string };
 
 const TARGET_EXTENSION = /\.(sln|vbproj)$/i;
@@ -61,6 +67,25 @@ function detectInDirectory(
 	displayName: string,
 	deps: TargetResolverDeps,
 ): TargetResolution {
+	// slnmix.config.json の target(web + dotnet を分けた構成で、.sln がサブディレクトリに
+	// あるとき用)。設定があればそれを使い、無ければ従来どおり直下を探す
+	const configured = deps.readConfigTarget?.(directory);
+	if (configured !== undefined) {
+		const absolutePath = path.resolve(directory, configured);
+		if (!deps.isFile(absolutePath)) {
+			return {
+				kind: "error",
+				message: `${CONFIG_FILE_NAME} の target が見つかりません: ${absolutePath}`,
+			};
+		}
+		if (!TARGET_EXTENSION.test(absolutePath)) {
+			return {
+				kind: "error",
+				message: `${CONFIG_FILE_NAME} の target は .sln / .vbproj を指定してください: ${configured}`,
+			};
+		}
+		return { kind: "file", path: absolutePath, autoDetected: true, source: "config" };
+	}
 	const names = deps.listFileNames(directory);
 	if (names === undefined) {
 		return {

@@ -61,9 +61,14 @@ workbench は 2026-09 時点で凍結(新機能は追わない)。
   `webview2-bridge.gen.json` の自動検出。`services/extraRootsCollector.ts`
   (追加ディレクトリの走査)、`services/contractSummary.ts`
   (`contract.schema.json` → `<contract_summary>`)がこれを使う
-- ルート = 入力(.sln / .vbproj)のあるディレクトリ。物理パス・設定ファイル・
-  protocol.md / procedure.md・.gitignore の基準はすべてここ。petari の
-  プロジェクトルートと一致させる運用(設計書 §14-3)
+- ルート(`src/rootResolver.ts`)= `--root` > 入力のディレクトリから上に向かって
+  最初に見つかる `slnmix.config.json` の場所(`.git` のあるディレクトリより上には
+  行かない)> 入力(.sln / .vbproj)のあるディレクトリ。物理パス・設定ファイル・
+  protocol.md / procedure.md・.gitignore・docs/・出力先の基準はすべてここ。
+  petari のプロジェクトルートと一致させる運用(設計書 §14-3、決定ログ 2026-09-22)。
+  引数なしの実行は設定の `target`(ルート相対の .sln / .vbproj)を使う
+  (`src/targetResolver.ts`)。`.git` を自動で辿らないのは、設定ファイルの無い
+  既存プロジェクトの出力を変えないため
 
 ## コーディング方針
 

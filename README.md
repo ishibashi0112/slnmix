@@ -131,11 +131,25 @@ npx slnmix Sub\Project.vbproj --stdout
 
 ## ファイルパスの規則(物理パス化)
 
-`<file path="...">` は**ルート**(入力の `.sln` / `.vbproj` があるフォルダ)からの
-相対物理パスで、`/` 区切りです。AI が changes.md に書くパスをこの `path` と
-一致させることで、[petari](https://github.com/ishibashi0112/petari) が
-パス変換なしにそのまま適用できます(petari のプロジェクトルートと slnmix の
-ルートを同じ場所にしてください。通常は `.sln` のあるリポジトリ直下です)。
+`<file path="...">` は**ルート**からの相対物理パスで、`/` 区切りです。AI が
+changes.md に書くパスをこの `path` と一致させることで、
+[petari](https://github.com/ishibashi0112/petari) がパス変換なしにそのまま
+適用できます(petari のプロジェクトルートと slnmix のルートを同じ場所にして
+ください。通常はリポジトリ直下です)。
+
+ルートは次の順で決まります(v0.16.0〜。設定ファイル・protocol.md・procedure.md・
+docs/・出力先の既定もルート基準):
+
+1. `--root <dir>` の明示指定(入力はその配下にあること)
+2. 入力のディレクトリから上に向かって最初に見つかる `slnmix.config.json` の場所
+   (`.git` のあるディレクトリより上には行かない)
+3. どちらもなければ入力(`.sln` / `.vbproj`)のあるディレクトリ(従来どおり)
+
+web と dotnet を分けた構成(例: webview2-bridge の雛形は `dotnet/MyApp.sln`)では、
+アプリのルートに `slnmix.config.json` を置けば `.sln` が `dotnet/` にあっても
+アプリのルート基準の物理パス(`dotnet/MyApp.Impl/X.vb`)になり、petari の
+ルート(`.git` の場所)と一致します。`.git` を自動で辿る方式は採っていません
+(設定ファイルを置いていない既存プロジェクトの出力を変えないため)。
 
 ```xml
 <file path="App/Forms/OrderForm.vb">                                   ← 物理パス = 論理パス
@@ -164,6 +178,8 @@ WinForms + WebView2 + React([webview2-bridge](https://github.com/ishibashi0112/w
 
 ```jsonc
 {
+  // 引数なしの npx slnmix が使う入力(ルート相対)。.sln がサブディレクトリにあるときに書く
+  "target": "dotnet/App.sln",
   "extraRoots": [
     { "path": "apps/web", "kind": "web" },
     { "path": "contract", "kind": "contract", "include": ["contract.ts", "package.json"] }
@@ -174,6 +190,9 @@ WinForms + WebView2 + React([webview2-bridge](https://github.com/ishibashi0112/w
 }
 ```
 
+- `target`: 引数を省略した `npx slnmix`(またはディレクトリ指定)が使う入力。
+  ルート相対で `.sln` / `.vbproj` を指す。設定ファイルのある場所がルートになるので、
+  アプリのルートで `npx slnmix` と打つだけで済みます
 - `extraRoots[].path`: ルート相対。**宣言されたディレクトリだけ**走査します
   (ディレクトリ走査をしない原則の、明示的でスコープの狭い例外)
 - `include` の既定: `kind: web` は `**/*.{ts,tsx,js,jsx,css,json,html}`、

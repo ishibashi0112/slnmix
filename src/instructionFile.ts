@@ -33,12 +33,12 @@ export const DEFAULT_INSTRUCTION_FILE_NAME = "protocol.md";
 
 /**
  * @param explicitPath --instruction-file の値(省略時 undefined)
- * @param targetPath 解決済みの入力(.sln / .vbproj)の絶対パス
+ * @param rootDir 既定の protocol.md を探すディレクトリ(ルート)
  * @param cwd 実行時のカレントディレクトリ(explicitPath の解決基準)
  */
 export function resolveInstructionFile(
 	explicitPath: string | undefined,
-	targetPath: string,
+	rootDir: string,
 	cwd: string,
 	deps: InstructionFileDeps,
 ): InstructionResolution {
@@ -53,10 +53,7 @@ export function resolveInstructionFile(
 		}
 		return { kind: "found", path: absolutePath, content };
 	}
-	const searchedPath = path.join(
-		path.dirname(targetPath),
-		DEFAULT_INSTRUCTION_FILE_NAME,
-	);
+	const searchedPath = path.join(rootDir, DEFAULT_INSTRUCTION_FILE_NAME);
 	const content = deps.readTextFile(searchedPath);
 	if (content === undefined) {
 		return { kind: "none", searchedPath };
