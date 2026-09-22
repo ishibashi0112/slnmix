@@ -1,4 +1,4 @@
-<!-- status: ready (2026-09-22 ユーザー承認。決定は HANDOFF-slnmix-petari-2026-09.md §17 と webview2-bridge HANDOFF.md §10 に追記済み) -->
+<!-- status: ready (2026-09-22 ユーザー承認。A / B (実装) / C は同日実装済み。会社 PC での B の確認と、§11 確認事項 8 (slnmix のルートと雛形の配置) が残り) -->
 # 動作確認の自動化 — テスト戦略 設計メモ v0.2 (2026-09-22)
 
 ## 0. この文書の位置づけ
@@ -294,23 +294,27 @@ L1 (MemoryTransport) では `db` / `bridge` を使わず `page` だけで書く�
 ### 6-2. 雛形 `templates/myapp/` に足すもの
 
 ```text
+playwright.config.ts       # アプリのルート。playwrightConfig(e2e) で projects: "screen" (L1) / "api" (L2) / "host" (L3) を展開
 e2e/
-  playwright.config.ts     # projects: "screen" (L1: Vite dev + memory) / "api" (L2: CDP) / "host" (L3: CDP)
-  e2e.config.ts            # allowedDatabases、追跡テーブル、hostExe
-  screen/sample.spec.ts    # L1 の見本 1 本
-  api/sample.spec.ts       # L2 の見本 1 本
-  host/sample.spec.ts      # L3 の見本 1 本 (§5-4 と同じ形)
-  README.md                # テストの型・命名・data-testid の約束・コマンド・観点の読み取り元 (§7-0)
+  e2e.config.ts            # web (dev サーバー) / host (exe) / db (allowedDatabases、track)
+  screen/customers.spec.ts # L1 の見本
+  api/customers.spec.ts    # L2 の見本
+  host/customers.spec.ts   # L3 の見本
+  README.md                # テストの型・命名・data-testid の約束・コマンド・観点の読み取り元 (§7-0)・DB 設定
 .env.e2e.example
 .npmrc                     # PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 ```
+
+(実装時の変更: `playwright.config.ts` は Playwright の慣例どおりアプリのルートに置き、
+パスの基準もルートにした。api / host も dev サーバー経由で exe を動かすので、
+`pnpm build:web` は不要。開発ビルドだけが `window.__webview2Bridge` を公開するため)
 
 `package.json` の scripts:
 
 | script | 内容 | 走る場所 |
 |---|---|---|
 | `test` | Vitest + Playwright "screen" (L1) | どこでも |
-| `test:e2e` | Playwright "api" + "host" (L2 / L3)。前提: `pnpm build:web` と `dotnet build` 済み | 会社 PC |
+| `test:e2e` | Playwright "api" + "host" (L2 / L3)。前提: `dotnet build` (Debug) 済み。dev サーバーは自動起動 | 会社 PC |
 | `test:all` | 上 2 つを順に。会社 PC で打つ 1 コマンド | 会社 PC |
 | `test:doctor` | `webview2-bridge-test doctor` | 会社 PC |
 
@@ -399,6 +403,12 @@ Copilot は実行できないので、Copilot 開発でのテストは「Copilot
 - `extraRoots` の `kind: "test"` に既定の include (`**/*.{ts,tsx,json,md}`) を足す
   (`slnmixConfig.ts` の `DEFAULT_INCLUDE`)。雛形が生成する設定に
   `{ "path": "e2e", "kind": "test" }` を含める
+- **未解決 (2026-09-22 実装時に判明)**: slnmix のルートは `.sln` のあるディレクトリで、
+  webview2-bridge の雛形は `dotnet/MyApp.sln` に置いているため、`web/` `contract/` `e2e/` が
+  ルート外になり extraRoots に入れられない (slnmix 決定ログ 2026-09-12 の「`.sln` が
+  リポジトリ直下にない構成が実際に出てきたら再検討」の事例)。雛形の `.sln` をルートに
+  移すか、slnmix に `root` 設定を足すか、要判断 (§11 確認事項 8)。雛形への
+  `slnmix.config.json` 同梱はこの判断の後
 - パックが 120K を超えるときは `--focus` で対象画面のテストだけを全文にする
   (既存機構。テスト固有の対応は不要)
 
@@ -478,8 +488,8 @@ Copilot は実行できないので、Copilot 開発でのテストは「Copilot
 
 ```text
 pnpm test:doctor                                     (初回だけ。3 つの前提を確認)
-pnpm build:web && dotnet build dotnet/MyApp.sln      (いつもどおり)
-pnpm test:all                                        (L1 → L2 → L3)
+dotnet build dotnet/MyApp.sln                        (Debug。いつもどおり)
+pnpm test:all                                        (L1 → L2 → L3。dev サーバーは自動起動)
   → 失敗があれば test-results/report.md がクリップボードに入る → Copilot に貼る
   → 全件成功なら「自動テスト OK」+ 手動項目の結果を伝える
 ```
@@ -502,9 +512,9 @@ Claude Code で新規アプリを組むときは、L1 が通ることを完了�
 
 | フェーズ | 内容 | 完了条件 | 場所 |
 |---|---|---|---|
-| **A** webview2-bridge L1 | `packages/test` の骨組み (フィクスチャの型・レポータ)、`apps/web/e2e/screen/` に L1 を数本、`pnpm -r test` に組み込み | Mac / クラウドで `pnpm -r test` が通り、Claude Code が自分で回せる | webview2-bridge |
-| **B** L2 / L3 と DB ヘルパ | `hostApp` / `bridge` (CDP 起動)、`db` / `testId` (Knex。自動テストは SQLite、mssql / oracledb は会社 PC)、本番ガード、レポータ + クリップボード、`doctor`、雛形 `e2e/`、gen 0.5.0 | 実装と SQLite での自動テストは Claude Code で完了。会社 PC で `pnpm test:doctor` の 3 項目が通り、雛形アプリの `pnpm test:all` が通り、わざと落とした 1 本のレポートが Copilot に貼れる形で出る | 実装は Claude Code、確認は会社 PC |
-| **C** slnmix | 手順文 v6、ひな型更新、`kind: "test"` 既定、WORKFLOW.md | スナップショット更新済みで `pnpm test` 通過。テスト無しの出力は v5 と同一。実プロジェクトで Copilot がコードとテストを同じ changes.md で返す | slnmix |
+| **A** webview2-bridge L1 | `packages/test` の骨組み (フィクスチャの型・レポータ)、`apps/web/e2e/screen/` に L1 を数本、`pnpm -r test` に組み込み | Mac / クラウドで `pnpm -r test` が通り、Claude Code が自分で回せる | webview2-bridge。**完了 (2026-09-22)**: screen 6 件が Linux で通過 |
+| **B** L2 / L3 と DB ヘルパ | `hostApp` / `bridge` (CDP 起動)、`db` / `testId` (Knex。自動テストは SQLite、mssql / oracledb は会社 PC)、本番ガード、レポータ + クリップボード、`doctor`、雛形 `e2e/`、gen 0.5.0 | 実装と SQLite での自動テストは Claude Code で完了。会社 PC で `pnpm test:doctor` の 3 項目が通り、雛形アプリの `pnpm test:all` が通り、わざと落とした 1 本のレポートが Copilot に貼れる形で出る | 実装は Claude Code (**完了 2026-09-22**: Vitest 45 件、ヘッドレス Chromium を代役にした CDP 起動と契約呼び出し、tgz からの雛形検証)、**会社 PC の確認は未実施** |
+| **C** slnmix | 手順文 v6、ひな型更新、`kind: "test"` 既定、WORKFLOW.md | スナップショット更新済みで `pnpm test` 通過。テスト無しの出力は v5 と同一。実プロジェクトで Copilot がコードとテストを同じ changes.md で返す | slnmix。**実装完了 (2026-09-22、v0.15.0)**。実プロジェクトでの確認は未実施 |
 | **D** 任意 | `<test_report>` 自動同梱、petari の 1 行案内、セルフホストランナー | 必要になったとき | 各 |
 
 A / B (SQLite まで) / C は Claude Code だけで完結する。B の会社 PC 確認は `pnpm test:doctor`。
@@ -520,6 +530,7 @@ A / B (SQLite まで) / C は Claude Code だけで完結する。B の会社 PC
 | 5 | 済 | 旧 WinForms のみのプロジェクトを対象外とする | 2026-09-22 承認 |
 | 6 | 済 | VB にテストコードを書かない | 2026-09-22 確定 |
 | 7 | 済 | npm install が会社 PC で可能 | 2026-09-22 確認 |
+| 8 | 必須 | slnmix のルート (`.sln` の場所) と雛形の配置 (`dotnet/MyApp.sln`) が噛み合わない (§7-3)。雛形の `.sln` をルートへ移すか、slnmix に `root` 設定を足すか | Copilot 開発で雛形アプリを扱う前に |
 
 ## 12. 決定事項 (2026-09-22 承認済み)
 
