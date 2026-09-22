@@ -1,5 +1,5 @@
-<!-- status: draft (方針案。承認後に HANDOFF-slnmix-petari-2026-09.md §17 と webview2-bridge HANDOFF.md §10 へ決定を追記する) -->
-# 動作確認の自動化 — テスト戦略 設計メモ v0.1 (2026-09-21)
+<!-- status: ready (2026-09-22 ユーザー承認。決定は HANDOFF-slnmix-petari-2026-09.md §17 と webview2-bridge HANDOFF.md §10 に追記済み) -->
+# 動作確認の自動化 — テスト戦略 設計メモ v0.2 (2026-09-22)
 
 ## 0. この文書の位置づけ
 
@@ -9,14 +9,18 @@
 - 読者はユーザー本人と、各リポジトリで実装にあたる Claude Code。テストの知識を前提に
   しないよう、使う用語は §2 に限る
 - 結論を先に書く
-  1. **専用ツールは自作しない。** Playwright Test + Vitest + xUnit という既製のランナーを
-     使い、自作するのは「WinForms ホストを起動して接続する部品」「DB を検証する部品」
+  1. **専用ツールは自作しない。** Playwright Test + Vitest という既製のランナーを使い、
+     自作するのは「WinForms ホストを起動して接続する部品」「DB を検証する部品」
      「結果を AI に貼れる形にする部品」の 3 つだけ
   2. **検証を 3 層に分け、DB が要る層を最小にする。** DB が要らない層は Mac や
-     クラウドの Claude Code が自分で走らせる。会社 PC で打つのは 1 コマンド
+     クラウドの Claude Code が自分で走らせる。会社 PC で打つのは 1 コマンド。
+     **テストコードはすべて TypeScript。VB にテストは書かない** (v0.2 で確定)
   3. **slnmix の手順文と文書ひな型に「テストも一緒に出す」を組み込む。** M365 Copilot に
      コードとテストを同じ changes.md で出させ、petari で適用し、`pnpm test` の結果を
-     貼り返す。petari は当面無改修
+     貼り返す。petari は無改修
+  4. **テストの観点は AI が仕様書・設計書から読み取る。** ユーザーがテスト要件を
+     指定しない (v0.2 で追加。§7-0)
+  5. **既存プロジェクトは崩さない。** テストの無いプロジェクトでは何も変わらない (§8)
 
 ### 前提 (変わらない制約)
 
@@ -24,9 +28,22 @@
 |---|---|
 | DB | SQL Server と Oracle が直近の主対象。ただし他の DB でも使える形にする。**テスト用の DB またはスキーマは用意できる** |
 | DB への到達 | 社内ネットワークの会社 Windows PC からのみ。Mac / クラウドの Claude Code からは届かない |
-| 会社 PC | Windows 11、Store / winget 不可。Node + pnpm は導入済み (create-webview2-bridge の実績)。Edge と WebView2 ランタイムあり |
+| 会社 PC | Windows 11、Store / winget 不可。Node + pnpm は導入済みで **npm install は問題なく行える** (2026-09-22 確認)。Edge と WebView2 ランタイムあり |
 | AI | Claude Code (Mac / クラウド。コマンドを実行できる) と M365 Copilot Chat (会社 PC。実行はできず、changes.md を返すだけ) |
 | 対象 | WebView2 + React で作る新規・改修アプリ (webview2-bridge 系)。**旧 WinForms のみのプロジェクトは対象外** (会社としてテストコードを書いていないため) |
+| VB 側 | **バックエンド (VB) にテストコードは書かない** (2026-09-22 確定)。VB は「テストされる側」で、テストは TS から実 exe を動かして行う |
+
+### 調査結果 (2026-09-22。既製で何が揃っているか)
+
+| やりたいこと | 既存の有無 | 該当するもの |
+|---|---|---|
+| WinForms + WebView2 の画面を自動操作 | ある | Playwright が公式対応 (CDP 接続)。Microsoft 公式は Edge WebDriver + Selenium、商用なら TestComplete |
+| 操作後に DB を検証 | パターンはあるが部品は無い | Playwright のフィクスチャで DB に繋ぎ seed → 操作 → SQL 検証 → 後片付け、が定番。§5 の snapshot / diff のような汎用 npm パッケージは無い |
+| AI にテストを書かせる・直させる | ある | Playwright Test Agents (v1.56 以降、planner / generator / healer)。Claude Code / VS Code 向けで、実行できるエージェントが前提 |
+| 実行できないチャット AI でテストを標準成果物にし結果を貼り戻す往復 | 無い | slnmix / petari の領域。自作だが小さい |
+| 4.8 + VB + WinForms + WebView2 + React の基盤にテスト内蔵の雛形 | 無い | 近いのは ASP.NET Core 版サンプル、Blazor Hybrid、Electron.NET (HANDOFF §2 で不採用) |
+
+つまり「土台は既製、接着剤だけ自作」。
 
 ## 1. 何を自動化するか
 
@@ -40,18 +57,19 @@
 
 ### 1-2. ゴール
 
-- 会社 PC で打つのは `pnpm test` (または `pnpm test:e2e`) の 1 つ。画面操作と DB 確認が
-  自動で走り、結果が Markdown 1 枚になってクリップボードに入る (petari の失敗レポートと
-  同じ使い勝手)
+- 会社 PC で打つのは `pnpm test:all` の 1 つ。画面操作と DB 確認が自動で走り、結果が
+  Markdown 1 枚になってクリップボードに入る (petari の失敗レポートと同じ使い勝手)
 - DB を触らない検証は AI 側で完結させ、会社 PC の出番を「DB を触る検証」だけにする
 - テストの書き方を 1 つの型に固定し、AI (Copilot / Claude Code) がその型でテストを
   書けるようにする。ユーザーがテストを書く必要はない (読めれば十分)
+- テストの観点はユーザーが指定せず、AI が仕様書・設計書から読み取る (§7-0)
 - 新規アプリでは `pnpm create webview2-bridge` の時点で仕組みが入っている
 
 ### 1-3. やらないこと
 
 - 旧スタイル .vbproj の WinForms のみのプロジェクトへのテスト導入。ブラウザ系ツールが
   効かず、UI Automation (FlaUI 等) は壊れやすい。会社方針とも合わない
+- VB 側のテストコード (xUnit 等)。契約経由で VB を呼ぶ L2 (§3) が代わりを務める
 - 見た目の回帰テスト (スクリーンショット比較)。環境差で誤検知が多く、運用が続かない
 - 100% の自動化。印刷・外部連携・目視が要るものは手動確認として残し、引継ぎ書に
   「自動 / 手動」を分けて記録する
@@ -60,12 +78,13 @@
 
 | 用語 | 意味 | この文書での使い方 |
 |---|---|---|
-| 単体テスト | 関数やクラス 1 つを、他と切り離して確かめる小さなテスト。速い | Vitest (TS) と xUnit (VB) |
+| 単体テスト | 関数やクラス 1 つを、他と切り離して確かめる小さなテスト。速い | Vitest (TS) |
 | E2E テスト | 実際の画面を操作して、最後まで通しで確かめるテスト。遅いが実態に近い | Playwright |
-| ランナー | テストを見つけて実行し、結果を集計するプログラム | Playwright Test / Vitest / `dotnet test` |
+| ランナー | テストを見つけて実行し、結果を集計するプログラム | Playwright Test / Vitest |
 | フィクスチャ | テストの前後に「準備」と「後片付け」をしてくれる部品。テスト本文には `page` や `db` として渡ってくる | 自作するのは主にこれ |
 | Arrange / Act / Assert | テスト 1 本の型。準備 → 操作 → 確認 | すべてのテストをこの 3 段で書く |
-| セレクタ | 画面の要素を指す目印。`data-testid="submit"` のように React 側で付ける | 見た目や文言に依存しないため壊れにくい |
+| セレクタ | 画面の要素を指す目印。`data-testid="order-submit"` のように React 側で付ける | 見た目や文言に依存しないため壊れにくい |
+| CDP | Chrome DevTools Protocol。F12 の開発者ツールがブラウザ本体と会話する仕組み。`--remote-debugging-port=9222` で起動すると PC 内の 9222 番に遠隔操作の口が開き、Playwright がそこに繋ぐ。WebView2 の中身は Edge なので同じ口が開く。localhost 限定・環境変数を付けたときだけ | L2 / L3 の接続方法 |
 | レポータ | ランナーの結果を人や AI 向けの形式に出す部品 | Markdown を出してクリップボードへ |
 | テストデータの分離 | テストが入れたデータを他のテストや既存データと混ぜないこと | 実行 ID の接頭辞と後片付けで実現 |
 
@@ -73,18 +92,27 @@
 
 | 層 | 確かめること | 道具 | DB | 走る場所 | 誰が走らせるか |
 |---|---|---|---|---|---|
-| **L1 画面ロジック** | 入力検証、ボタンの活性、一覧表示、エラー表示など、画面の振る舞い | Playwright + Vite dev サーバー + MemoryTransport (モック応答) | 不要 | Mac / クラウド / 会社 PC どこでも | **Claude Code が自分で**。Copilot 開発時はユーザーが `pnpm test` |
-| **L2 業務ロジック** | VB の Impl (`Implements IXxxApi`) を直接呼び、SQL と DB 更新が正しいか | xUnit (net48) + テスト DB | **要** | 会社 PC | ユーザー (`dotnet test`)。将来はランナー (§8-3) |
-| **L3 通し** | 実際の exe + WebView2 で画面を操作し、DB が変わったことまで確かめる | Playwright (CDP 接続) + DB ヘルパ + テスト DB | **要** | 会社 PC | ユーザー (`pnpm test:e2e`) |
+| **L1 画面ロジック** (`e2e/screen/`) | 入力検証、ボタンの活性、一覧表示、エラー表示など、画面の振る舞い | Playwright + Vite dev サーバー + MemoryTransport (モック応答) | 不要 | Mac / クラウド / 会社 PC どこでも | **Claude Code が自分で**。Copilot 開発時はユーザーが `pnpm test` |
+| **L2 API 通し** (`e2e/api/`) | 実 exe の VB Impl を **契約経由で直接呼び**、応答と DB 更新が正しいか。画面は操作しない | Playwright (CDP) + `bridge` フィクスチャ + DB ヘルパ + テスト DB | **要** | 会社 PC | ユーザー (`pnpm test:e2e`)。将来はランナー (§9-3) |
+| **L3 画面からの通し** (`e2e/host/`) | 実 exe + WebView2 で画面を操作し、DB が変わったことまで確かめる | Playwright (CDP) + DB ヘルパ + テスト DB | **要** | 会社 PC | ユーザー (`pnpm test:e2e`) |
+
+L2 の仕組み: CDP で繋いだページの中でブリッジクライアント (`client.parts.search(...)`) を
+`page.evaluate` から呼ぶ。apps/web の `bridge.ts` が開発ビルド時 (または
+`VITE_EXPOSE_BRIDGE=1`) にクライアントを `window.__webview2Bridge` に公開する 1〜2 行だけが
+アプリ側の準備。VB にテストコードは要らない。この基盤では VB は「リクエストを受けて DB と
+話して返す」だけなので、契約メソッドを全部通せば手書き VB のほぼ全部を覆える。
 
 分ける理由:
 
 - 会社 PC でしか走らないもの (L2 / L3) を減らすほど、手動の出番が減る。React 側の
   作り込みの大半は L1 で確かめられる
-- 失敗の切り分けが速い。L1 が通って L3 が落ちるなら原因は VB か DB、L2 が落ちるなら
-  SQL、と絞れる
-- 本数の目安: L1 は画面ごとに数本〜十数本、L2 は API メソッドごとに 1〜3 本、L3 は
+- 失敗の切り分けが速い。L1 が通って L3 が落ちるなら原因は VB か DB。L2 が落ちるなら
+  VB + DB、L2 が通って L3 が落ちるなら画面と契約のつなぎ
+- 本数の目安: L1 は画面ごとに数本〜十数本、L2 は契約メソッドごとに 1〜3 本、L3 は
   主要シナリオ (登録・更新・削除・検索) を画面ごとに数本。L3 は遅いので増やしすぎない
+
+VB に単体テストを書かないことで失うものは小さい。契約に載らない VB コード (ホスト Form の
+数十行など) はテストされないが、この基盤の設計上そこは薄く保つ前提。
 
 補足: Vitest は L1 の下に位置する「関数単位」のテスト (契約の zod 検証、モックハンドラ、
 表示用の整形関数など) に使う。gen / client では既に使っている。React コンポーネント
@@ -93,30 +121,26 @@
 
 ## 4. 道具の選定と理由
 
-### 4-1. Playwright Test (L1 / L3。ブラウザ操作 + ランナー + レポート)
+### 4-1. Playwright Test (L1 / L2 / L3。ブラウザ操作 + ランナー + レポート)
 
 - **WebView2 を直接操作できる** (公式にサポート)。ホスト exe を環境変数
   `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9222` 付きで起動すると
   WebView2 がデバッグ口を開くので、テスト側は `chromium.connectOverCDP("http://localhost:9222")`
-  で繋ぐ。**ホストの VB は無改修**
-- **ブラウザのダウンロードが不要**。L3 は WebView2 ランタイムに繋ぐだけ。L1 は
-  `channel: "msedge"` で会社 PC の Edge を使う (Mac / クラウドでは Playwright 同梱の
-  Chromium)。Store / winget 不可の環境でも npm からの取得だけで済む
+  で繋ぐ。**ホストの VB は無改修**。配布する exe には環境変数を付けないので影響なし
+- **ブラウザのダウンロードが不要**。Playwright は通常インストール時に専用 Chromium を
+  Microsoft の配信サーバーから落とすが、この計画では使わない。L2 / L3 は WebView2
+  ランタイムに繋ぐだけ。L1 は `channel: "msedge"` で会社 PC の Edge を使う (Mac / クラウド
+  では Playwright 同梱の Chromium)。`PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1` を `.npmrc` に置く
 - ランナー・並列制御・リトライ・スクリーンショット・トレース・カスタムレポータが
   一式揃っている。自作する範囲が最小になる
+- Playwright Test Agents (planner / generator / healer) は Claude Code のセッションで
+  L1 の生成に使える。生成物は §5-4 の型に合わせる
 
 ### 4-2. Vitest (関数単位)
 
 gen / client で使用中。apps/web と雛形にも同じ設定を置く。新しい道具ではない。
 
-### 4-3. xUnit (L2)
-
-`WebView2Bridge.Contract.Tests` (net8.0、Mac で `dotnet test` 可) と同じ流儀で、
-`<App>.Impl.Tests` を **net48** で作る。net48 の xUnit は Windows の `dotnet test` で動く
-(会社 PC 限定)。Impl が SqlClient / Oracle.ManagedDataAccess を使うため net48 固定。
-テスト DB の接続文字列は環境変数から読む (§5-1)。
-
-### 4-4. DB アクセスの汎用化: Knex を薄く包む
+### 4-3. DB アクセスの汎用化: Knex を薄く包む
 
 「SQL Server と Oracle が主だが他も使いたい」に対して、DB ごとにアダプタを自作するのは
 保守が続かない。**Knex** (Node の SQL ビルダ兼接続層) を devDependency として使い、
@@ -124,25 +148,36 @@ gen / client で使用中。apps/web と雛形にも同じ設定を置く。新�
 
 | DB | Knex の client | npm ドライバ | 備考 |
 |---|---|---|---|
-| SQL Server | `mssql` | `tedious` | 純 JS |
+| SQL Server | `mssql` | `tedious` | 純 JS。Knex の要件で `tedious` 直接 (npm の `mssql` パッケージは tedious のラッパーで、Knex では使われない) |
 | Oracle | `oracledb` | `oracledb` 6.x | thin モード。Instant Client 不要 |
 | PostgreSQL | `pg` | `pg` | 純 JS |
 | MySQL / MariaDB | `mysql2` | `mysql2` | 純 JS |
-| SQLite | `better-sqlite3` | `better-sqlite3` | ネイティブビルドあり |
+| SQLite | `better-sqlite3` | `better-sqlite3` | ネイティブビルドあり。ヘルパ自身の自動テストに使う |
+
+**Knex を選んだ理由 (2026-09-22 ユーザー質問への回答)**: 決め手は Oracle。Prisma は
+Oracle 非対応 (予定なし)、Drizzle は SQL Server 対応済みだが Oracle 非対応、Kysely は
+SQL Server 内蔵で Oracle はコミュニティ製 dialect のみ。SQL Server と Oracle の両方を
+公式 dialect で持つのは Knex だけ (3.3.0 が 2026-06 リリース、保守継続中)。用途も違う:
+Prisma / Drizzle はアプリが自分のスキーマを TS で定義して型付きクライアントを生成する
+道具で、既存 DB (スキーマは VB / DBA 側) に対しテーブル名を文字列で受けて動的に
+読み書きするテスト補助部品には、スキーマ取り込みと再生成の負担が過剰。ヘルパの内側に
+隠すので、将来 Kysely が Oracle を公式対応したら API を変えずに差し替えられる。
 
 ドライバは各アプリが自分の分だけ入れる (テスト部品の `peerDependencies` は optional)。
 「実行時依存ゼロ」は petari の方針であり、webview2-bridge のテスト部品は
 devDependency なので矛盾しない。
 
-### 4-5. 採らなかった案
+### 4-4. 採らなかった案
 
 | 案 | 採らない理由 |
 |---|---|
+| xUnit で VB の Impl を直接テスト | VB にテストコードを書かない方針 (2026-09-22)。L2 (契約経由) が代替 |
 | Cypress | WebView2 に繋げない。ブラウザ同梱で会社 PC への導入が重い |
-| Selenium / WebDriver | WebView2 対応はあるが Edge Driver の版合わせが要る。ランナーは別途必要 |
+| Selenium / Edge WebDriver | WebView2 対応はあるが Edge Driver の版合わせが要る。ランナーは別途必要 |
 | FlaUI / WinAppDriver (WinForms 直接操作) | 旧 WinForms を対象外にした時点で不要。壊れやすく AI にも書きにくい |
 | 自作ランナー / 自作 DB アダプタ | 既製で足りる。自作は §6-1 の 3 部品に限る |
-| ORM (Prisma / TypeORM) でスキーマを持つ | テストのためにスキーマ定義を二重管理することになる。Knex の生 SQL / ビルダで十分 |
+| Prisma / Drizzle / Kysely | §4-3。Oracle と動的テーブル名 |
+| ドライバ直 (mssql / oracledb / pg) + 自前アダプタ | プレースホルダ記法 (`@p` / `:p` / `$1`)、識別子の引用符、件数制限構文の方言差を自分で持つことになる |
 | Docker で DB をローカルに立てる | 会社 PC に Docker を入れられない。テスト DB があるので不要 |
 
 ## 5. DB 検証の設計 (汎用の型)
@@ -164,7 +199,7 @@ devDependency なので矛盾しない。
 - **後片付けはフィクスチャが自動で行う**。`db.insert` で入れた行と、`db.diff` で
   「増えた」と判定された行 (画面操作でアプリが作った行) を teardown で削除する。
   削除順は挿入の逆順 (外部キー対策)。削除できなかった行はレポートに残す
-- L3 は **直列実行** (`workers: 1`)。DB を共有するので並列にしない。L1 は並列でよい
+- L2 / L3 は **直列実行** (`workers: 1`)。DB を共有するので並列にしない。L1 は並列でよい
 
 ### 5-3. ヘルパ API (自作部品その 2)
 
@@ -184,6 +219,8 @@ devDependency なので矛盾しない。
 
 ### 5-4. テストの型 (これ 1 つに固定する)
 
+L3 (画面からの通し):
+
 ```ts
 import { test, expect } from "@ishibashi0112/webview2-bridge-test";
 
@@ -193,8 +230,8 @@ test("受注を登録すると Orders に 1 行増え、画面に採番が表示
   const before = await db.snapshot([{ table: "Orders", key: ["OrderNo"], where: { CustomerCode: `${testId}-C1` } }]);
 
   // Act: 画面を操作する (data-testid で要素を指す)
-  await page.getByTestId("customer-code").fill(`${testId}-C1`);
-  await page.getByTestId("submit").click();
+  await page.getByTestId("order-customer-code").fill(`${testId}-C1`);
+  await page.getByTestId("order-submit").click();
   await expect(page.getByTestId("order-no")).toHaveText(/^ORD-/);
 
   // Assert: DB の変化を確かめる
@@ -204,8 +241,22 @@ test("受注を登録すると Orders に 1 行増え、画面に採番が表示
 });
 ```
 
-L1 (MemoryTransport) では `db` を使わず `page` だけで書く。L2 (xUnit) は同じ
-Arrange / Act / Assert を VB で書き、Act が画面操作ではなく `api.Register(req)` になる。
+L2 (API 通し。Act が画面操作ではなく契約メソッドの呼び出しになる):
+
+```ts
+test("orders.register は Orders に 1 行入れ、採番した OrderNo を返す", async ({ bridge, db, testId }) => {
+  await db.insert("Customers", { CustomerCode: `${testId}-C1`, Name: "テスト顧客" });
+  const before = await db.snapshot([{ table: "Orders", key: ["OrderNo"], where: { CustomerCode: `${testId}-C1` } }]);
+
+  const res = await bridge.call("orders.register", { customerCode: `${testId}-C1`, lines: [{ partNo: "A-001", qty: 2 }] });
+
+  expect(res.orderNo).toMatch(/^ORD-/);
+  const diff = await db.diff(before);
+  expect(diff.Orders.inserted).toHaveLength(1);
+});
+```
+
+L1 (MemoryTransport) では `db` / `bridge` を使わず `page` だけで書く。
 
 ### 5-5. SQL Server と Oracle の差で気をつける点
 
@@ -222,31 +273,36 @@ Arrange / Act / Assert を VB で書き、Act が画面操作ではなく `api.R
 ### 6-1. 新パッケージ `packages/test` (npm: `@ishibashi0112/webview2-bridge-test`)
 
 公開パッケージが gen / client / create の 3 つから 4 つになる (HANDOFF.md §10 に決定を
-追記)。中身は自作する 3 部品だけ。
+追記済み)。中身は自作する 3 部品 + 診断コマンド。
 
-1. **`hostApp` フィクスチャ**: exe を CDP 有効で起動 (環境変数を付けて spawn)、
-   `connectOverCDP` で繋ぎ、最初のページを `page` として渡し、終了時に exe を落とす。
+1. **`hostApp` / `page` / `bridge` フィクスチャ**: exe を CDP 有効で起動 (環境変数を付けて
+   spawn)、`connectOverCDP` で繋ぎ、最初のページを `page` として渡し、終了時に exe を落とす。
    `WEBVIEW2_USER_DATA_FOLDER` を一時ディレクトリにして実行ごとに掃除する。
-   exe のパスは `playwright.config.ts` の `use.hostExe` (既定 `dotnet/<App>.Host/bin/Debug/net48/<App>.Host.exe`)
+   `bridge.call(method, input)` は `page.evaluate` で `window.__webview2Bridge` を呼ぶ。
+   exe のパスは `e2e.config.ts` の `hostExe` (既定 `dotnet/<App>.Host/bin/Debug/net48/<App>.Host.exe`)
 2. **`db` / `testId` フィクスチャ** (§5)。Knex を包む
 3. **レポータ**: Playwright のカスタムレポータ。失敗したテストごとに「テスト名 / 失敗した
    行と期待値・実際値 / 画面のスクリーンショットのパス / DB diff (attach 経由) / 後片付けの
    結果」を Markdown 1 枚 (`test-results/report.md`) にまとめ、**クリップボードにコピー**
    する (petari の `clipReportOnFailure` と同じ体験。実装も同じ OS コマンド方式)。
    Copilot に貼る前提で 120K 文字以内に切り詰める
+4. **`webview2-bridge-test doctor`**: 会社 PC での前提確認を 1 コマンドにする。
+   ① Playwright が入っていて Edge が見つかる ② `hostExe` を CDP 付きで起動して接続し
+   ページを 1 つ取れる ③ `.env.e2e.local` の設定でテスト DB に繋がり、ガードを通り、
+   1 行読める。フェーズ B の実機確認はこれを走らせるだけ
 
 ### 6-2. 雛形 `templates/myapp/` に足すもの
 
 ```text
 e2e/
-  playwright.config.ts     # projects: "screen" (L1: Vite dev + memory) / "host" (L3: CDP)
+  playwright.config.ts     # projects: "screen" (L1: Vite dev + memory) / "api" (L2: CDP) / "host" (L3: CDP)
   e2e.config.ts            # allowedDatabases、追跡テーブル、hostExe
-  support/                 # 上記パッケージの re-export と、アプリ固有の小さな拡張 (通常は空)
   screen/sample.spec.ts    # L1 の見本 1 本
+  api/sample.spec.ts       # L2 の見本 1 本
   host/sample.spec.ts      # L3 の見本 1 本 (§5-4 と同じ形)
-  README.md                # テストの型・命名・data-testid の約束・コマンド
+  README.md                # テストの型・命名・data-testid の約束・コマンド・観点の読み取り元 (§7-0)
 .env.e2e.example
-dotnet/MyApp.Impl.Tests/   # net48 xUnit の見本 1 本 (接続文字列は環境変数)
+.npmrc                     # PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 ```
 
 `package.json` の scripts:
@@ -254,9 +310,9 @@ dotnet/MyApp.Impl.Tests/   # net48 xUnit の見本 1 本 (接続文字列は環�
 | script | 内容 | 走る場所 |
 |---|---|---|
 | `test` | Vitest + Playwright "screen" (L1) | どこでも |
-| `test:impl` | `dotnet test dotnet/MyApp.Impl.Tests` (L2) | 会社 PC |
-| `test:e2e` | Playwright "host" (L3)。前提: `pnpm build:web` と `dotnet build` 済み | 会社 PC |
-| `test:all` | 上 3 つを順に。会社 PC で打つ 1 コマンド | 会社 PC |
+| `test:e2e` | Playwright "api" + "host" (L2 / L3)。前提: `pnpm build:web` と `dotnet build` 済み | 会社 PC |
+| `test:all` | 上 2 つを順に。会社 PC で打つ 1 コマンド | 会社 PC |
+| `test:doctor` | `webview2-bridge-test doctor` | 会社 PC |
 
 雛形を変えるので gen はマイナー版を上げる (0.5.0)。`packages/gen/template/myapp/` は
 `sync` で追従する。
@@ -270,15 +326,17 @@ CDP は環境変数で有効になる。Release ビルドでも効くが、テ�
 
 - 操作する要素・確認する要素には `data-testid` を付ける。命名は `<画面>-<役割>`
   (例 `order-submit`, `order-no`)。テストは文言や CSS で要素を選ばない
+- `bridge.ts` は開発ビルド時 (`import.meta.env.DEV`) または `VITE_EXPOSE_BRIDGE=1` のとき
+  クライアントを `window.__webview2Bridge` に公開する (L2 用)。本番ビルドでは公開しない
 - この約束を雛形の README と slnmix の手順文 (§7-1) の両方に書く。AI が画面を作るときに
   自然に付くようにする
 
 ### 6-5. リポジトリ内の見本アプリ `apps/web` にも同じ構成を入れる
 
 `apps/web/e2e/screen/` に L1 を数本置き、`pnpm -r test` に含める。**Claude Code で
-webview2-bridge を触るときの完了条件に L1 を加える** (HANDOFF.md §11 のコマンド節に追記)。
-L3 は会社 PC の Windows 実機確認の手順 (HANDOFF.md 「Windows での実行確認」) に
-`pnpm test:e2e` を足す。
+webview2-bridge を触るときの完了条件に L1 を加える** (HANDOFF.md のコマンド節に追記)。
+L2 / L3 は会社 PC の Windows 実機確認の手順 (HANDOFF.md 「Windows での実行確認」) に
+`pnpm test:doctor` と `pnpm test:e2e` を足す。
 
 ## 7. slnmix / petari への組み込み (「テストを意識づける」)
 
@@ -286,25 +344,45 @@ Copilot は実行できないので、Copilot 開発でのテストは「Copilot
 結果を貼り返す」往復になる。往復を減らすため、手順文と文書ひな型でテストを標準の
 成果物にする。
 
+### 7-0. テストの観点は文書から読み取る (2026-09-22 ユーザー要望)
+
+ユーザーはテスト要件を指定しない。AI が次の場所から観点を読み取り、テストにする。
+
+| 読み取り元 | 観点 |
+|---|---|
+| 仕様書 §3-3 入力項目 / 設計書 §4-2 入力項目と検証 | 必須・桁・形式・範囲の検証と、そのエラー表示 (L1) |
+| 仕様書 §3-2 操作一覧 / 設計書 §4-3 操作と活性条件 | ボタン・メニューの活性条件 (L1) |
+| 仕様書 §4 機能一覧 + §5 処理フロー / 設計書 §5 処理仕様 | 機能ごとの正常系の通し (L3) と契約メソッドごとの応答・DB 更新 (L2) |
+| 仕様書 §7 業務ルール・制約 / 設計書 §3-3 キー・採番・突き合わせ | ルール違反時の拒否、採番の形式 (L2) |
+| 仕様書 §8 エラー時・0 件時 / 設計書 §8 エラー処理・0 件時の方針 | 0 件表示、失敗時のメッセージ、ロールバック (L1 + L2) |
+| 設計書 §5-3 トランザクション・排他・監査列 | 監査列の更新、二重登録の防止 (L2) |
+
+規則: 文書に書かれていない振る舞いはテストにせず、設計書の確認事項に回す (推測で仕様を
+作らない)。文書が無い改修 (as-is 仕様書を先に起こす流れ、手順文 v5) では、起こした
+仕様書から同じ表で読み取る。手順文 v6 と雛形 README にこの表を載せる。
+
 ### 7-1. 手順文 v6 (`src/assets/procedure.ts`)
 
-- 「パックの読み方」に追加: `<file>` のうち `e2e/`・`*.spec.ts`・`*.test.ts`・
-  `*.Tests/` は自動テスト。既存のテストは変更対象であり、手本でもある
+- 「パックの読み方」に追加: `<file>` のうち `e2e/` 配下と `*.spec.ts` / `*.test.ts` は
+  自動テスト。既存のテストは変更対象であり、手本でもある
 - 「回答の構成」の **変更** に追加: 「変更した振る舞いに対応するテストを、同じ changes.md に
-  含めてください。DB を触らない画面の振る舞いは `e2e/screen/`、VB の業務ロジックは
-  `*.Impl.Tests/`、画面から DB までの通しは `e2e/host/` です。既存テストの型
-  (Arrange / Act / Assert、`data-testid`、`testId` 接頭辞) に合わせてください。テストを
-  出さない場合は理由を 1 行書いてください」
+  含めてください。観点は仕様書・設計書から読み取ります (§7-0 の表)。DB を触らない画面の
+  振る舞いは `e2e/screen/`、契約メソッドの応答と DB 更新は `e2e/api/`、画面から DB までの
+  通しは `e2e/host/` です。既存テストの型 (Arrange / Act / Assert、`data-testid`、
+  `testId` 接頭辞) に合わせてください。テストを出さない場合は理由を 1 行書いてください」
 - **自己検証** に 2 項目追加: 「変更した振る舞いにテストがあるか (ないなら理由)」
   「画面に追加した要素に `data-testid` を付けたか」
 - 「判断の原則」に追加: 「テストは既存データに依存させず、`testId` 接頭辞で前提行を
-  入れてください。本番データを前提にしないでください」
-- design モード: 設計書 §9 の各バッチに「完了条件 (自動テスト / 手動確認)」を書かせる
+  入れてください。本番データを前提にしないでください。テストの観点はユーザーに聞かず
+  文書から読み取り、文書に無い振る舞いは確認事項に回してください」
+- design モード: 設計書 §9 の各バッチに「完了条件 (自動テスト / 手動確認)」を書かせる。
+  自動テストは §7-0 の表で読み取った観点をファイル名 (`e2e/<層>/<画面>.spec.ts`) で挙げる
 - **テストが無いプロジェクトでは求めない**: パックに上記パスのテストが 1 つも無く、
-  `slnmix.config.json` にも `tests` の宣言が無いときは、テストの節を出さない
-  (docs 連携の `{{DOCS_SECTIONS}}` と同じ条件付き置換 `{{TEST_SECTIONS}}`)。
+  `slnmix.config.json` にも `kind: "test"` の extraRoots が無いときは、テストに関する
+  文をすべて出さない (docs 連携の `{{DOCS_SECTIONS}}` と同じ条件付き置換 `{{TEST_SECTIONS}}`)。
   旧 WinForms のみのプロジェクトはこれで自動的に対象外になる
-- `PROCEDURE_VERSION = 6`、`test-fixtures/procedure/` のスナップショット更新
+- `PROCEDURE_VERSION = 6`、`test-fixtures/procedure/` のスナップショット更新。
+  テスト無しのときの出力は v5 と同一であること (スナップショットで担保)
 
 ### 7-2. 文書ひな型 (`src/assets/docTemplates.ts`)
 
@@ -314,14 +392,13 @@ Copilot は実行できないので、Copilot 開発でのテストは「Copilot
 | 仕様書 | 章「10. テスト」を追加 (11. 未実装・既知の制限、12. 更新履歴 に繰り下げ)。機能 (F-n) ごとに、どのテストが守っているかと、手動確認が要る項目 |
 | 引継ぎ書 §7 動作確認の記録 | 「自動テスト: コマンド / 件数 / 失敗 0 件」と「手動確認: 項目と結果」を分けて書く |
 
-`DOC_TEMPLATES_VERSION` を上げる。
+`DOC_TEMPLATES_VERSION` を上げる。既存の docs/ は書き換えない (ひな型は新規作成時のみ)。
 
 ### 7-3. `slnmix.config.json`
 
-- `extraRoots` の `kind: "test"` に既定の include (`**/*.{ts,tsx,vb,json}`) を足す
+- `extraRoots` の `kind: "test"` に既定の include (`**/*.{ts,tsx,json,md}`) を足す
   (`slnmixConfig.ts` の `DEFAULT_INCLUDE`)。雛形が生成する設定に
-  `{ "path": "e2e", "kind": "test" }` を含める。`*.Impl.Tests` は SDK スタイル .vbproj
-  なので .sln 経由で既に入る
+  `{ "path": "e2e", "kind": "test" }` を含める
 - パックが 120K を超えるときは `--focus` で対象画面のテストだけを全文にする
   (既存機構。テスト固有の対応は不要)
 
@@ -337,7 +414,7 @@ Copilot は実行できないので、Copilot 開発でのテストは「Copilot
 
 - 30 秒版の「ビルド・動作確認 → 結果を AI に伝える」を
   「ビルド → `pnpm test:all` → 失敗ならクリップボードのレポートを貼る → 手動確認は
-  引継ぎ書の手動項目だけ → OK と伝える」に
+  引継ぎ書の手動項目だけ → OK と伝える」に (テストがあるプロジェクトの場合)
 - 3-2 の手順 3〜5 を同様に更新。「継続判定: 引継ぎ」の条件である「ビルドと動作確認の
   成功」は「自動テストが全件成功し、手動項目も OK」と読み替える
 
@@ -353,68 +430,80 @@ Copilot は実行できないので、Copilot 開発でのテストは「Copilot
 ### 7-7. 旧 WinForms のみのプロジェクト
 
 対象外で確定。§7-1 の条件付き置換により手順文にテストの節が出ないので、既存の
-運用は変わらない。将来テストを入れたくなったら、フォームから切り離せる業務ロジック
-クラスに限って L2 (xUnit net48) を足す、という順で検討する。
+運用は変わらない。
 
-## 8. 実行環境と往復の形
+## 8. 既存プロジェクトを崩さない保証
 
-### 8-1. 会社 PC (Windows)
+| リポジトリ | 保証 | 担保 |
+|---|---|---|
+| webview2-bridge | テスト部品は新しい別パッケージ。既存アプリが gen を上げても `e2e/` は増えない (`create` で作る新規アプリの雛形にだけ入る)。ホストの VB は無改修 | 雛形以外の生成物に差が無いことを gen のスナップショットで確認 |
+| slnmix | テスト節はパックにテストが無ければ出ない。既存プロジェクトの出力は今と同一。ひな型の変更は新規に作る文書にだけ効く | `test-fixtures/procedure/` のスナップショット (テスト無し = v5 と同一) |
+| petari | 無改修 | — |
+| Copilot 開発 | テストのあるプロジェクトだけで Copilot がテストを同梱する。旧 WinForms のみのプロジェクトは何も変わらない | 上記 slnmix の条件付き置換 |
 
-前提: Node + pnpm (済)、Edge と WebView2 ランタイム (済)、Playwright は npm からの
-取得のみ (ブラウザのダウンロードなし。`PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1` を
-`.npmrc` か scripts に置く)、テスト DB の接続情報を `.env.e2e.local` に置く。
+## 9. 実行環境と往復の形
+
+### 9-1. 会社 PC (Windows)
+
+前提: Node + pnpm (済)、npm install 可 (済)、Edge と WebView2 ランタイム (済)、
+テスト DB の接続情報を `.env.e2e.local` に置く。
 
 ```text
-pnpm build:web && dotnet build dotnet/MyApp.sln     (いつもどおり)
+pnpm test:doctor                                     (初回だけ。3 つの前提を確認)
+pnpm build:web && dotnet build dotnet/MyApp.sln      (いつもどおり)
 pnpm test:all                                        (L1 → L2 → L3)
   → 失敗があれば test-results/report.md がクリップボードに入る → Copilot に貼る
   → 全件成功なら「自動テスト OK」+ 手動項目の結果を伝える
 ```
 
-### 8-2. Mac / クラウド (Claude Code)
+### 9-2. Mac / クラウド (Claude Code)
 
 `pnpm test` (Vitest + L1) を Claude Code が自分で走らせる。webview2-bridge 自体の改修と、
 Claude Code で新規アプリを組むときは、L1 が通ることを完了条件にする。L2 / L3 は
 「会社 PC で `pnpm test:all` を実行してください」と引継ぎ書に書く。
 
-### 8-3. 任意: GitHub Actions のセルフホストランナー (フェーズ D)
+### 9-3. 任意: GitHub Actions のセルフホストランナー (フェーズ D)
 
 会社 PC にランナーを常駐させると、ブランチを push するだけで L2 / L3 が社内 DB に対して
 走り、結果を Claude Code (クラウド) が GitHub 経由で読める。往復が完全に自動になる。
 ランナーが必要とするのは GitHub への outbound HTTPS だけで、DB は社内に留まる。
 情シスへの確認事項は「会社 PC から GitHub へのランナー常駐接続」の 1 点。
-不可なら 8-1 の手動貼り付けで運用する。
+不可なら 9-1 の手動貼り付けで運用する。
 
-## 9. 段階計画
+## 10. 段階計画
 
 | フェーズ | 内容 | 完了条件 | 場所 |
 |---|---|---|---|
 | **A** webview2-bridge L1 | `packages/test` の骨組み (フィクスチャの型・レポータ)、`apps/web/e2e/screen/` に L1 を数本、`pnpm -r test` に組み込み | Mac / クラウドで `pnpm -r test` が通り、Claude Code が自分で回せる | webview2-bridge |
-| **B** L3 と DB ヘルパ | `hostApp` (CDP 起動)、`db` / `testId` (Knex、mssql と oracledb で確認)、本番ガード、レポータ + クリップボード、雛形 `e2e/` と `Impl.Tests`、gen 0.5.0 | 会社 PC で雛形から作ったアプリの `pnpm test:all` が通り、わざと落とした 1 本のレポートが Copilot に貼れる形で出る | webview2-bridge (実装は Mac、確認は会社 PC) |
-| **C** slnmix | 手順文 v6、ひな型更新、`kind: "test"` 既定、WORKFLOW.md | スナップショット更新済みで `pnpm test` 通過。実プロジェクトで Copilot がコードとテストを同じ changes.md で返す | slnmix |
+| **B** L2 / L3 と DB ヘルパ | `hostApp` / `bridge` (CDP 起動)、`db` / `testId` (Knex。自動テストは SQLite、mssql / oracledb は会社 PC)、本番ガード、レポータ + クリップボード、`doctor`、雛形 `e2e/`、gen 0.5.0 | 実装と SQLite での自動テストは Claude Code で完了。会社 PC で `pnpm test:doctor` の 3 項目が通り、雛形アプリの `pnpm test:all` が通り、わざと落とした 1 本のレポートが Copilot に貼れる形で出る | 実装は Claude Code、確認は会社 PC |
+| **C** slnmix | 手順文 v6、ひな型更新、`kind: "test"` 既定、WORKFLOW.md | スナップショット更新済みで `pnpm test` 通過。テスト無しの出力は v5 と同一。実プロジェクトで Copilot がコードとテストを同じ changes.md で返す | slnmix |
 | **D** 任意 | `<test_report>` 自動同梱、petari の 1 行案内、セルフホストランナー | 必要になったとき | 各 |
 
-A と C は Claude Code だけで完結する。B の DB 部分だけ会社 PC での確認が要る。
+A / B (SQLite まで) / C は Claude Code だけで完結する。B の会社 PC 確認は `pnpm test:doctor`。
 
-## 10. 確認事項
+## 11. 確認事項
 
-| # | 種別 | 内容 | 期限 |
+| # | 種別 | 内容 | 状態 |
 |---|---|---|---|
-| 1 | 必須 | テスト DB は SQL Server と Oracle の両方にあるか。片方だけなら B の実機確認はその DB で行い、もう片方は Knex の方言差の範囲として扱う | B 着手前 |
-| 2 | 必須 | テスト DB の接続情報を会社 PC のどこに置くか (`.env.e2e.local` 案でよいか)。本番ガードの許可リストに入れる DB 名 | B 着手前 |
-| 3 | 後回し | パッケージ名 `@ishibashi0112/webview2-bridge-test` でよいか (`-e2e` も候補) | A 着手前 |
-| 4 | 後回し | セルフホストランナー (§8-3) を情シスに相談するか。相談しない場合は D から外す | C 完了後 |
-| 5 | 後回し | 旧 WinForms のみのプロジェクトを対象外とする (§7-7) で確定してよいか | C 着手前 |
+| 1 | 後回し | テスト DB は SQL Server と Oracle の両方にあるか。片方だけなら B の実機確認はその DB で行い、もう片方は Knex の方言差の範囲として扱う | B の会社 PC 確認前に |
+| 2 | 後回し | 本番ガードの許可リストに入れる DB 名 (`.env.e2e.local` 案は承認済み) | B の会社 PC 確認前に |
+| 3 | 済 | パッケージ名 `@ishibashi0112/webview2-bridge-test` | 2026-09-22 異論なし |
+| 4 | 後回し | セルフホストランナー (§9-3) を情シスに相談するか | C 完了後 |
+| 5 | 済 | 旧 WinForms のみのプロジェクトを対象外とする | 2026-09-22 承認 |
+| 6 | 済 | VB にテストコードを書かない | 2026-09-22 確定 |
+| 7 | 済 | npm install が会社 PC で可能 | 2026-09-22 確認 |
 
-## 11. 決定事項 (提案。承認後に各 HANDOFF の決定ログへ)
+## 12. 決定事項 (2026-09-22 承認済み)
 
-1. 専用ツールは自作せず、Playwright Test / Vitest / xUnit / Knex の上に 3 部品
-   (hostApp、db、レポータ) だけを自作する
-2. 検証は L1 (画面ロジック、DB なし) / L2 (VB 業務ロジック、DB あり) / L3 (通し、DB あり)
-   の 3 層。DB が要る層は会社 PC 限定で、`pnpm test:all` の 1 コマンドにまとめる
+1. 専用ツールは自作せず、Playwright Test / Vitest / Knex の上に 3 部品
+   (hostApp + bridge、db、レポータ) と `doctor` だけを自作する
+2. 検証は L1 (画面ロジック、DB なし) / L2 (契約経由の API 通し、DB あり) / L3 (画面からの
+   通し、DB あり) の 3 層。テストコードはすべて TS で、VB にテストは書かない。
+   DB が要る層は会社 PC 限定で、`pnpm test:all` の 1 コマンドにまとめる
 3. DB 検証は Knex 経由で方言を吸収し、SQL Server / Oracle を実機確認、他 DB はドライバの
    追加だけで使える形にする。本番ガードと `testId` 接頭辞による分離を必須にする
 4. 結果は Markdown をクリップボードに入れて AI に貼る (petari の失敗レポートと同じ体験)
 5. slnmix の手順文と文書ひな型で「テストも同じ changes.md で出す」を標準にし、テストの
-   無いプロジェクトでは求めない。petari は当面無改修
-6. 旧 WinForms のみのプロジェクトは対象外
+   観点は仕様書・設計書から AI が読み取る。テストの無いプロジェクトでは求めない。
+   petari は当面無改修
+6. 旧 WinForms のみのプロジェクトは対象外。既存プロジェクトの出力・生成物は変えない
