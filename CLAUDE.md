@@ -30,14 +30,21 @@ workbench は 2026-09 時点で凍結(新機能は追わない)。
 
 - `src/cli.ts` — 引数処理とファイル I/O(Node 標準の `util.parseArgs` を使用し、
   依存追加はしない)
-- `src/targetResolver.ts` — 入力(.sln / .vbproj)の自動検出
+- `src/targetResolver.ts` — 入力(.sln / .vbproj)の自動検出。その場所の
+  `slnmix.config.json` が `kind: "generic"` なら探さずに generic 構成を返す
+  (VB.NET 以外のプロジェクト。設計書 §19、v0.17.0)
+- `src/initConfig.ts` — `--init-config`(generic 構成の `slnmix.config.json` を
+  実在するディレクトリだけで作る冪等な scaffold。候補が無ければ推測せずエラー)
 - `src/designerFileFilter.ts` — `--include-designer-file` のパターン一致
 - `src/instructionFile.ts` — petari 規約文(protocol.md)の `<instruction>` 連結
 - `src/procedureFile.ts` / `src/assets/procedure.ts` — 作業手順文
   `<procedure>`(内蔵既定文 or procedure.md)、`--task` / `--plan` の解決、
   先頭リマインダ、チャット本文に貼る指示テキスト(`buildPromptText` →
   `<出力名>.prompt.md`)。内蔵文を変えたら `PROCEDURE_VERSION` を上げ
-  `test-fixtures/procedure/` のスナップショットを更新する
+  `test-fixtures/procedure/` のスナップショットを更新する。手順文 v7 の
+  `layout`(`solution` | `generic`)は `{{LAYOUT:...}}` プレースホルダと
+  「自己検証」「自動テスト」の該当行だけを差し替える。solution の本文は v6 と
+  同一に保つ(generic は `<mode>.generic.md` / `<mode>.generic.docs.tests.md`)
 - 手順文 v6 の `{{TEST_SECTIONS}}`(「自動テスト」の節。`docs/HANDOFF-testing-2026-09.md`
   §7)は `src/autoTests.ts` の判定(出力する `<file>` に `e2e/` 配下 or
   `*.spec.ts` / `*.test.ts` があるか、extraRoots に `kind: "test"` があるか)が真の
@@ -58,7 +65,11 @@ workbench は 2026-09 時点で凍結(新機能は追わない)。
   `--init-docs` は冪等な scaffold。手順文 v3 の `{{DOCS_SECTIONS}}` は docs 連携時
   のみ置換(`test-fixtures/procedure/<mode>.docs.md`)。petari は無改修
 - `src/slnmixConfig.ts` — `slnmix.config.json`(任意)と
-  `webview2-bridge.gen.json` の自動検出。`services/extraRootsCollector.ts`
+  `webview2-bridge.gen.json` の自動検出。トップレベルの `kind: "generic"` で
+  .sln / .vbproj を使わず `extraRoots` だけでパックする(ルートは設定の場所に
+  固定。`--root` / `--legacy-paths` / Designer 系オプションは不可)。
+  `repomixExporter.ts` の `layout: "generic"` はヘッダーの VB 固有の注記を外す
+  だけで、solution の出力は従来と同一。`services/extraRootsCollector.ts`
   (追加ディレクトリの走査)、`services/contractSummary.ts`
   (`contract.schema.json` → `<contract_summary>`)がこれを使う
 - ルート(`src/rootResolver.ts`)= `--root` > 入力のディレクトリから上に向かって
@@ -79,7 +90,8 @@ workbench は 2026-09 時点で凍結(新機能は追わない)。
   .vbproj の既定 Compile グロブ(`**/*.vb`)の展開で、展開したことを診断と
   出力ヘッダーに明記する(`globMatcher.ts` は `**` / `*` / `?` / `{a,b}` のみ解釈)
 - ディレクトリ走査はしない。例外は `slnmix.config.json` の `extraRoots` で
-  明示されたディレクトリだけ(スコープの狭い例外として README に明記)
+  明示されたディレクトリだけ(スコープの狭い例外として README に明記)。
+  `kind: "generic"` でもこの例外の範囲は変えない(宣言されたディレクトリのみ)
 - `<file path>` はルート相対の物理パス・`/` 区切りが既定(v0.12.0〜)。
   `--legacy-paths` で旧形式(1〜2 バージョン残して廃止)
 - 壊れた入力でもクラッシュせず、取れた分だけ出す

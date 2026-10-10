@@ -24,6 +24,7 @@ suite("slnmixConfig: 設定なし", () => {
 	test("ファイルがなければ空の設定(エラーにしない)", () => {
 		const result = loadSlnmixConfig(ROOT, fakeDeps({}));
 		assert.deepStrictEqual(result.config, {
+			kind: "solution",
 			extraRoots: [],
 			generatedDirs: [],
 			sources: [],
@@ -249,5 +250,75 @@ suite("slnmixConfig: target", () => {
 			assert.strictEqual(result.config.target, undefined, String(target));
 			assert.ok(result.diagnostics.some((d) => d.message.includes(fragment)), String(target));
 		}
+	});
+});
+
+suite("slnmixConfig: kind(generic 構成。v0.17.0)", () => {
+	test("省略時は solution", () => {
+		const result = loadSlnmixConfig(
+			ROOT,
+			fakeDeps({ "slnmix.config.json": JSON.stringify({ extraRoots: [{ path: "src" }] }) }),
+		);
+		assert.strictEqual(result.config.kind, "solution");
+		assert.deepStrictEqual(result.diagnostics, []);
+	});
+
+	test("設定ファイル自体が無くても solution", () => {
+		assert.strictEqual(loadSlnmixConfig(ROOT, fakeDeps({})).config.kind, "solution");
+	});
+
+	test('"generic" を読む(extraRoots あり。診断なし)', () => {
+		const result = loadSlnmixConfig(
+			ROOT,
+			fakeDeps({
+				"slnmix.config.json": JSON.stringify({
+					kind: "generic",
+					extraRoots: [{ path: "src", kind: "src" }],
+				}),
+			}),
+		);
+		assert.strictEqual(result.config.kind, "generic");
+		assert.deepStrictEqual(result.config.extraRoots.map((r) => r.path), ["src"]);
+		assert.deepStrictEqual(result.diagnostics, []);
+	});
+
+	test("不正な値は警告して solution(既定)に戻す", () => {
+		const result = loadSlnmixConfig(
+			ROOT,
+			fakeDeps({ "slnmix.config.json": JSON.stringify({ kind: "typescript" }) }),
+		);
+		assert.strictEqual(result.config.kind, "solution");
+		assert.ok(result.diagnostics.some((d) => d.message.includes("kind は")));
+	});
+
+	test("generic で target があれば無視して警告", () => {
+		const result = loadSlnmixConfig(
+			ROOT,
+			fakeDeps({
+				"slnmix.config.json": JSON.stringify({
+					kind: "generic",
+					target: "dotnet/App.sln",
+					extraRoots: [{ path: "src" }],
+				}),
+			}),
+		);
+		assert.strictEqual(result.config.kind, "generic");
+		assert.ok(!("target" in result.config));
+		assert.ok(result.diagnostics.some((d) => d.message.includes("target は使いません")));
+	});
+
+	test("generic で extraRoots が無ければ警告(出力対象がない)", () => {
+		const result = loadSlnmixConfig(
+			ROOT,
+			fakeDeps({ "slnmix.config.json": JSON.stringify({ kind: "generic" }) }),
+		);
+		assert.strictEqual(result.config.kind, "generic");
+		assert.ok(result.diagnostics.some((d) => d.message.includes("少なくとも 1 つ")));
+	});
+
+	test('kind: "src" の include 既定は TS / JS / スタイル / JSON / HTML / Markdown', () => {
+		assert.deepStrictEqual(defaultIncludeFor("src"), [
+			"**/*.{ts,tsx,js,jsx,mjs,cjs,css,scss,json,html,md}",
+		]);
 	});
 });

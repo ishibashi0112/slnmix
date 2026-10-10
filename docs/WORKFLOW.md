@@ -27,6 +27,8 @@
 web と dotnet を分けたアプリ (webview2-bridge の雛形。`.sln` は `dotnet/` の下) でも同じです。
 雛形に同梱の `slnmix.config.json` (`target` と `extraRoots`) がアプリのルートにあるので、
 そこで `npx slnmix` と打てばアプリのルート基準のパックになり、petari のルートと一致します。
+VB.NET 以外のプロジェクト (TypeScript 等。`.sln` が無い) は初回に `npx slnmix --init-config`
+を 1 回打てば、あとは同じです (3-7)。
 
 ## 1. 登場するもの
 
@@ -175,6 +177,27 @@ changes.md (`changes (1).md` などの連番付きでもそのまま使えます
 git で手動で戻したなど、本当に当て直したいときだけ `--force` を付けます
 (`npx petari undo` で戻したものは付けなくても当て直せます)。
 
+### 3-7. VB.NET 以外のプロジェクト (TypeScript 等) で使う (slnmix v0.17.0〜)
+
+`.sln` / `.vbproj` の無いプロジェクトでも、slnmix → Copilot Chat → petari の流れは
+そのまま使えます。本家 repomix で代用すると `.prompt.md` (本文に貼る手順文・規約文) が
+作れず、添付末尾に埋めた規約文は Copilot に無視されるため、AI の返答が changes.md の
+規約から外れて petari のパースで落ちます。slnmix を使えばその経路を塞げます。
+
+1. `npx petari init` (規約文 protocol.md。まだなければ)
+2. `npx slnmix --init-config` (一回だけ)。実在する `src` / `tests` 等だけを
+   `slnmix.config.json` の `extraRoots` に書き、`"kind": "generic"` を付ける。
+   ソースのディレクトリ名が候補 (src / app / lib / apps / packages) に無いときは
+   設定例が表示されるので手で書く
+3. 以降は 0 章と同じ。`npx slnmix` が「対象: generic 構成」と表示し、`extraRoots` の
+   ディレクトリだけでパックと `.prompt.md` を作る。手順文は VB 固有の項目を外した
+   文面 (先頭行に `layout: generic`) になる
+4. docs/ 連携 (`--init-docs`)・継続判定・自動テストの節も同じように使える
+
+対象ディレクトリを増やすときは `extraRoots` に `{ "path": "...", "kind": "src" }` を
+追記します。TS / JS 以外の言語は `include` を明示してください (`kind: "src"` の既定は
+`**/*.{ts,tsx,js,jsx,mjs,cjs,css,scss,json,html,md}`)。
+
 ## 4. コマンド早見表
 
 ```text
@@ -184,6 +207,7 @@ npx slnmix --design 画面名         その設計書を新規作成 / 継続す
 npx slnmix --mode plan             方針だけ先に出させる
 npx slnmix --print-prompt | clip   本文用テキストを直接クリップボードへ (Windows。Mac は pbcopy)
 npx slnmix --init-docs             docs/ 連携の初回セットアップ (冪等)
+npx slnmix --init-config           VB.NET 以外のプロジェクト向け slnmix.config.json を作る (冪等)
 
 npx petari                         Downloads の changes.md を適用
 npx petari undo                    直前の適用を巻き戻す
@@ -203,3 +227,9 @@ npx petari init                    規約文 protocol.md と .petari/ を作る 
 - **本文用テキストが 120K 文字を超えた** (警告が出る) → 設計書を分割するか、
   design モード以外では設計書は本文に入らないので、設計を確定させて実装に進む
 - **`--mode design` でエラー** → docs/ 連携が要る。`npx slnmix --init-docs`
+- **「.sln / .vbproj が見つかりません」** → VB.NET 以外のプロジェクトなら
+  `npx slnmix --init-config` (3-7)。VB.NET なら `.sln` のある場所で実行するか
+  `slnmix.config.json` の `target` を書く
+- **petari のパースが続けて失敗する (TS プロジェクトで repomix を使っている)** →
+  規約文が本文に届いていない。slnmix に切り替えて `.prompt.md` を貼る (3-7)。
+  当座は `npx petari protocol` の出力を本文に貼れば規約文だけは届く

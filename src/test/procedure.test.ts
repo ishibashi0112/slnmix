@@ -14,13 +14,16 @@ import * as path from "path";
 import {
 	DOCS_SECTIONS,
 	isProcedureMode,
+	LAYOUT_TEXT,
 	MODE_SECTIONS,
+	MODE_SECTIONS_BY_LAYOUT,
 	PROCEDURE_MODES,
 	PROCEDURE_TEMPLATE,
 	PROCEDURE_VERSION,
 	renderBuiltinProcedure,
 	renderProcedureTemplate,
 	TEST_SECTIONS,
+	TEST_SECTIONS_BY_LAYOUT,
 } from "../assets/procedure";
 
 const FIXTURES_ROOT = path.resolve(__dirname, "..", "..", "test-fixtures");
@@ -31,6 +34,24 @@ function fixture(name: string): string {
 
 suite("procedure: スナップショット", () => {
 	for (const mode of PROCEDURE_MODES) {
+		test(`${mode} モード(generic 構成)がスナップショットと一致する`, () => {
+			assert.strictEqual(
+				renderBuiltinProcedure(mode, { layout: "generic" }),
+				fixture(`${mode}.generic.md`),
+			);
+		});
+		test(`${mode} モード(generic 構成 + docs + 自動テスト)がスナップショットと一致する`, () => {
+			assert.strictEqual(
+				renderBuiltinProcedure(mode, { layout: "generic", docs: true, tests: true }),
+				fixture(`${mode}.generic.docs.tests.md`),
+			);
+		});
+		test(`${mode} モード: layout 省略は "solution" と同じ`, () => {
+			assert.strictEqual(
+				renderBuiltinProcedure(mode, { layout: "solution" }),
+				renderBuiltinProcedure(mode),
+			);
+		});
 		test(`${mode} モードの内蔵既定文がスナップショットと一致する`, () => {
 			assert.strictEqual(renderBuiltinProcedure(mode), fixture(`${mode}.md`));
 		});
@@ -81,10 +102,11 @@ suite("procedure: スナップショット", () => {
 
 	test("テストなしの本文は v5 と同一(版数の行を除く)", () => {
 		// v5 のスナップショットはこの版数置換だけで v6 に更新した。v6 で足したものは
-		// すべて {{TEST_SECTIONS}} の中にあり、テストなしでは空文字になる
+		// すべて {{TEST_SECTIONS}} の中にあり、テストなしでは空文字になる。
+		// v7(layout)も solution 構成では版数の行だけが変わる
 		for (const mode of PROCEDURE_MODES) {
 			const plain = renderBuiltinProcedure(mode);
-			assert.ok(plain.startsWith("<!-- slnmix procedure v6 (mode: "));
+			assert.ok(plain.startsWith(`<!-- slnmix procedure v${PROCEDURE_VERSION} (mode: `));
 			assert.ok(!plain.includes("テスト"), `${mode}: テストなしの本文にテストの記述がある`);
 			assert.ok(!plain.includes("data-testid"));
 		}
@@ -225,5 +247,90 @@ suite("procedure: 描画", () => {
 		assert.ok(isProcedureMode("design"));
 		assert.ok(!isProcedureMode("Full"));
 		assert.ok(!isProcedureMode(""));
+	});
+});
+
+suite("procedure: 構成の種類(layout、v7)", () => {
+	test("solution のプレースホルダ置換後の文面は v6 と同じ語句を保つ", () => {
+		const text = renderBuiltinProcedure("full", { tests: true });
+		for (const phrase of [
+			"一般的な VB.NET / React のコード",
+			"<ui_summary> は Designer.vb からの要約です",
+			".vbproj は編集しないでください",
+			"「どのフォームか」",
+			"Option Strict On",
+			"Handles 句",
+			"Shift_JIS",
+			"e2e/screen/",
+		]) {
+			assert.ok(text.includes(phrase), `${phrase} がありません`);
+		}
+		assert.ok(!text.includes("{{LAYOUT:"), "プレースホルダが残っています");
+	});
+
+	test("generic の文面に VB.NET / WinForms 固有の記述が残らない", () => {
+		for (const mode of PROCEDURE_MODES) {
+			const text = renderBuiltinProcedure(mode, { layout: "generic", docs: true, tests: true });
+			for (const phrase of [
+				"VB.NET",
+				"Designer",
+				".vbproj",
+				"フォームか",
+				"Option Strict",
+				"Handles",
+				"Shift_JIS",
+				"e2e/screen/",
+				"db.snapshot",
+				"{{LAYOUT:",
+			]) {
+				assert.ok(!text.includes(phrase), `${mode}: ${phrase} が残っています`);
+			}
+			assert.ok(text.startsWith(`<!-- slnmix procedure v${PROCEDURE_VERSION} (mode: ${mode}, layout: generic) -->\n`));
+		}
+	});
+
+	test("generic でも共通の節(パックの読み方 / 回答の構成 / 判断の原則)と新規ファイルの規則は残る", () => {
+		const text = renderBuiltinProcedure("full", { layout: "generic" });
+		for (const phrase of [
+			"## パックの読み方",
+			"## 回答の構成",
+			"## 判断の原則",
+			"### 4. 自己検証",
+			"新規ファイルは changes.md の create で出してください。パスは <file_summary> に示す物理パスの規則で書いてください",
+			"<contract_summary> がある場合",
+			"[MASKED] は伏せ字です",
+			"骨格のみ(skeleton)",
+		]) {
+			assert.ok(text.includes(phrase), `${phrase} がありません`);
+		}
+	});
+
+	test("テンプレートの {{LAYOUT:...}} は LAYOUT_TEXT の両構成に同じキーで定義されている", () => {
+		const names = [...PROCEDURE_TEMPLATE.matchAll(/\{\{LAYOUT:([A-Z_]+)\}\}/g)].map((m) => m[1]);
+		assert.ok(names.length > 0);
+		for (const name of names) {
+			assert.ok(name !== undefined && name in LAYOUT_TEXT.solution, `solution に ${name} がありません`);
+			assert.ok(name !== undefined && name in LAYOUT_TEXT.generic, `generic に ${name} がありません`);
+		}
+		assert.deepStrictEqual(Object.keys(LAYOUT_TEXT.solution).sort(), Object.keys(LAYOUT_TEXT.generic).sort());
+	});
+
+	test("MODE_SECTIONS / TEST_SECTIONS は solution 構成のもの(後方互換)。generic との差は自己検証とテストの置き場の行だけ", () => {
+		assert.strictEqual(MODE_SECTIONS, MODE_SECTIONS_BY_LAYOUT.solution);
+		assert.strictEqual(TEST_SECTIONS, TEST_SECTIONS_BY_LAYOUT.solution);
+		// plan / design は自己検証を持たないので構成で変わらない
+		assert.strictEqual(MODE_SECTIONS_BY_LAYOUT.generic.plan, MODE_SECTIONS_BY_LAYOUT.solution.plan);
+		assert.strictEqual(MODE_SECTIONS_BY_LAYOUT.generic.design, MODE_SECTIONS_BY_LAYOUT.solution.design);
+		assert.notStrictEqual(MODE_SECTIONS_BY_LAYOUT.generic.full, MODE_SECTIONS_BY_LAYOUT.solution.full);
+		assert.notStrictEqual(MODE_SECTIONS_BY_LAYOUT.generic.implement, MODE_SECTIONS_BY_LAYOUT.solution.implement);
+		assert.ok(MODE_SECTIONS_BY_LAYOUT.generic.full.includes("- 新規ファイルは create で出している"));
+	});
+
+	test("procedure.md(カスタム文)にプレースホルダが無ければ layout は影響しない", () => {
+		const custom = "# 自前の手順\n{{MODE}} で動く\n";
+		assert.strictEqual(
+			renderProcedureTemplate(custom, "full", { layout: "generic" }),
+			renderProcedureTemplate(custom, "full"),
+		);
 	});
 });

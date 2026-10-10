@@ -100,6 +100,13 @@ export interface RepomixExportOptions {
 	generatedDirs?: readonly string[];
 	/** 生成コードの原文を含める(--include-generated) */
 	includeGenerated?: boolean;
+	/**
+	 * 構成の種類(既定 "solution")。"generic" は .sln / .vbproj を使わず extraRoots
+	 * だけでパックする(sources は空。rootDir 必須)。ヘッダーの説明文から
+	 * Visual Studio / Designer / .resx 等の VB 固有の記述を外す。"solution" の
+	 * 出力は従来と同一
+	 */
+	layout?: "solution" | "generic";
 }
 
 export interface SkippedFile {
@@ -719,21 +726,31 @@ export function buildRepomixOutput(
 		.map((source) => source.label);
 	const rootName = rootDir === undefined ? undefined : path.basename(rootDir);
 
+	const generic = options.layout === "generic";
+
 	const content = [
-		`このファイルは slnmix が「${title}」の論理構成(.sln / .vbproj)に基づき、ソースコードを 1 ファイルにまとめたものです(Repomix 形式)。`,
+		generic
+			? `このファイルは slnmix が「${title}」の slnmix.config.json(extraRoots)に宣言されたディレクトリに基づき、ソースコードを 1 ファイルにまとめたものです(Repomix 形式)。`
+			: `このファイルは slnmix が「${title}」の論理構成(.sln / .vbproj)に基づき、ソースコードを 1 ファイルにまとめたものです(Repomix 形式)。`,
 		"",
 		"<file_summary>",
 		"<purpose>",
 		"AI にコードベース全体を渡すためのパック済み表現。",
-		rootDir === undefined
-			? "パスは物理配置ではなく Visual Studio の論理構成(Link 解決済み)に基づく。"
-			: "<directory_structure> は Visual Studio の論理構成(Link 解決済み)、<file> の path 属性は物理配置に基づく。",
+		generic
+			? "<directory_structure> と <file> の path 属性は、ルートからの相対物理パスに基づく(.sln / .vbproj の論理構成は使っていない)。"
+			: rootDir === undefined
+				? "パスは物理配置ではなく Visual Studio の論理構成(Link 解決済み)に基づく。"
+				: "<directory_structure> は Visual Studio の論理構成(Link 解決済み)、<file> の path 属性は物理配置に基づく。",
 		"AI がコードを理解し質問に回答するための入力であり、このままコンパイル・実行できる形であることは保証しない。",
 		"</purpose>",
 		"<notes>",
 		...(rootDir === undefined
 			? []
-			: [
+			: generic
+				? [
+						`- <file> の path 属性はルート「${rootName}」からの相対物理パス(/ 区切り)。changes.md のパスはこの path をそのまま使うこと。新規ファイルも同じ規則で書くこと`,
+					]
+				: [
 					`- <file> の path 属性はルート「${rootName}」からの相対物理パス(/ 区切り)。changes.md のパスはこの path をそのまま使うこと。新規ファイルも同じ規則で、置きたいプロジェクトの物理フォルダ配下に書くこと`,
 					"- 論理パス(Visual Studio 上の見え方)と物理パスが異なるファイル(Link)は logical / project 属性を持ち、<directory_structure> では「→ 物理パス」を併記",
 					...(outsideRootPaths.length > 0
@@ -743,16 +760,20 @@ export function buildRepomixOutput(
 						: []),
 				]),
 		"- 文字コードは UTF-8 に統一済み(元ファイルの Shift_JIS 等は自動変換)",
-		"- EmbeddedResource(.resx)は含まれない",
-		options.includeSensitive === true
-			? "- Designer 関連ファイルは含まれる"
-			: typeof options.includeSensitive === "function"
-				? uiSummaryEnabled
-					? "- Designer 関連ファイルは指定されたもののみ原文を含む(それ以外はフォームのコントロール構成のみ <ui_summary> として要約)"
-					: "- Designer 関連ファイルは指定されたもののみ含まれる"
-				: uiSummaryEnabled
-					? "- Designer 関連ファイルの原文は含まれない(フォームのコントロール構成のみ <ui_summary> として要約)"
-					: "- Designer 関連ファイルは含まれない",
+		...(generic
+			? []
+			: [
+					"- EmbeddedResource(.resx)は含まれない",
+					options.includeSensitive === true
+						? "- Designer 関連ファイルは含まれる"
+						: typeof options.includeSensitive === "function"
+							? uiSummaryEnabled
+								? "- Designer 関連ファイルは指定されたもののみ原文を含む(それ以外はフォームのコントロール構成のみ <ui_summary> として要約)"
+								: "- Designer 関連ファイルは指定されたもののみ含まれる"
+							: uiSummaryEnabled
+								? "- Designer 関連ファイルの原文は含まれない(フォームのコントロール構成のみ <ui_summary> として要約)"
+								: "- Designer 関連ファイルは含まれない",
+				]),
 		options.maskCredentials
 			? "- 認証情報らしき値は [MASKED] に自動置換済み。[MASKED] は伏せ字であり、元のソースには実際の値が存在する(<masked_credentials> を参照。機械判定のため漏れの可能性はあり、共有前に目視確認を推奨)"
 			: "- 認証情報の自動マスクは無効(ハードコードされた認証情報がそのまま含まれる可能性あり)",
@@ -776,7 +797,9 @@ export function buildRepomixOutput(
 			: []),
 		...(extra !== undefined
 			? [
-					`- [${extraRoots.map((r) => r.kind).join("] [")}] のグループは .vbproj に乗らない追加ディレクトリ(slnmix.config.json の extraRoots。<file> の root 属性)。認証情報マスクは VB 側と同様に適用済み`,
+					generic
+						? `- [${extraRoots.map((r) => r.kind).join("] [")}] のグループは slnmix.config.json の extraRoots に宣言されたディレクトリ(<file> の root 属性)。宣言されていないディレクトリは含まれない`
+						: `- [${extraRoots.map((r) => r.kind).join("] [")}] のグループは .vbproj に乗らない追加ディレクトリ(slnmix.config.json の extraRoots。<file> の root 属性)。認証情報マスクは VB 側と同様に適用済み`,
 				]
 			: []),
 		...(generatedDirs.length > 0

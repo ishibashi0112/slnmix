@@ -25,6 +25,7 @@ import { describeAutoTests, detectAutoTests } from "./autoTests";
 import { buildDesignerFileMatcher } from "./designerFileFilter";
 import { decideMode, describeDocs, resolveDocs, type DocsResolution } from "./docs";
 import { initDocs } from "./initDocs";
+import { initConfig } from "./initConfig";
 import { resolveInstructionFile } from "./instructionFile";
 import {
 	assembleOutput,
@@ -57,6 +58,8 @@ const USAGE = `slnmix — .sln / .vbproj の論理構成に基づく repomix 互
   入力を省略するとカレントディレクトリ(ディレクトリ指定ならその直下)の
   *.sln を自動検出します(なければ *.vbproj。複数ある場合は候補を表示)。
   その場所の slnmix.config.json に "target": "dotnet/App.sln" があればそれを使います。
+  同じ設定が "kind": "generic" なら .sln / .vbproj を探さず、extraRoots に宣言した
+  ディレクトリだけでパックします(VB.NET 以外のプロジェクト。--init-config で作成)。
 
   ルート(<file path> の基準。設定ファイル・protocol.md・docs/・出力先もここ)は
   --root > 入力のディレクトリから上に向かって最初に見つかる slnmix.config.json の
@@ -106,6 +109,10 @@ const USAGE = `slnmix — .sln / .vbproj の論理構成に基づく repomix 互
                         docs/design/<名前>.md を新規作成)
       --init-docs       docs/ 連携の初回セットアップ(docs/design/、docs/spec/、
                         docs/README.md を作り slnmix.config.json に docs 設定を追記)
+      --init-config     VB.NET 以外のプロジェクト向けに slnmix.config.json
+                        (kind: "generic")を作る(カレント、または --root の場所。
+                        実在する src / tests 等のディレクトリだけを extraRoots に
+                        書く。既にあれば変えない)
       --plan <file>     implement モードで承認済みの方針を <plan> として同梱する
       --procedure-file <path>
                         作業手順文を明示指定(既定: ルートの procedure.md を
@@ -133,6 +140,7 @@ const USAGE = `slnmix — .sln / .vbproj の論理構成に基づく repomix 互
   npx slnmix --task task.md --mode plan            (方針だけ先に出させる)
   npx slnmix --task task.md --mode implement --plan plan.md
   npx slnmix --print-procedure > procedure.md      (手順文をカスタマイズ)
+  npx slnmix --init-config && npx slnmix           (TypeScript 等のプロジェクトで使う)
   npx slnmix --init-docs                           (docs/ 連携を始める。一回だけ)
   npx slnmix                                       (以後は文書の状態からモード自動)
 
@@ -201,6 +209,22 @@ const FS_DEPS: FsDeps = {
 		return results;
 	},
 };
+
+function isDirectoryPath(absolutePath: string): boolean {
+	try {
+		return fs.statSync(absolutePath).isDirectory();
+	} catch {
+		return false;
+	}
+}
+
+function isFilePath(absolutePath: string): boolean {
+	try {
+		return fs.statSync(absolutePath).isFile();
+	} catch {
+		return false;
+	}
+}
 
 /** ソース/プロジェクトファイルを文字コード自動判定(BOM / UTF-8 / CP932)で読む */
 function readSourceTextFile(absolutePath: string): string | undefined {
@@ -298,6 +322,7 @@ function main(): number {
 			mode: { type: "string" },
 			design: { type: "string" },
 			"init-docs": { type: "boolean", default: false },
+			"init-config": { type: "boolean", default: false },
 			plan: { type: "string" },
 			"procedure-file": { type: "string" },
 			"no-procedure": { type: "boolean", default: false },
@@ -328,10 +353,14 @@ function main(): number {
 		return 1;
 	}
 	if (values["print-procedure"]) {
+		// カレント(または --root)の設定が kind: "generic" なら generic 向けの文面にする
+		const printRoot = path.resolve(process.cwd(), values.root ?? ".");
+		const printConfig = loadSlnmixConfig(printRoot, { readTextFile: readSourceTextFile });
 		process.stdout.write(
 			renderBuiltinProcedure(explicitMode ?? DEFAULT_PROCEDURE_MODE, {
 				docs: "placeholder",
 				tests: "placeholder",
+				layout: printConfig.config.kind,
 			}),
 		);
 		return 0;
@@ -347,64 +376,90 @@ function main(): number {
 		return 1;
 	}
 
+	// VB.NET 以外のプロジェクト向けの設定ファイルを作る(入力の解決より前。.sln は無い前提)
+	if (values["init-config"]) {
+		const initRoot = path.resolve(process.cwd(), values.root ?? positionals[0] ?? ".");
+		const result = initConfig(initRoot, {
+			isDirectory: isDirectoryPath,
+			isFile: isFilePath,
+			listFileNames: FS_DEPS.listFileNames,
+			writeTextFile: (p, content) => fs.writeFileSync(p, content, "utf8"),
+		});
+		if (result.kind === "error") {
+			console.error(result.message);
+			return 1;
+		}
+		if (result.kind === "kept") {
+			console.error(`既存: ${result.path}(変更なし)`);
+			return 0;
+		}
+		console.error(`作成: ${result.path}`);
+		for (const root of result.roots) {
+			console.error(`  extraRoots: ${root.path}/(kind: "${root.kind}")`);
+		}
+		console.error(
+			"以後は同じ場所で npx slnmix を実行すると、extraRoots のディレクトリだけでパックと本文用テキストを作ります。対象を増やすときは extraRoots に path を追記してください。",
+		);
+		return 0;
+	}
+
 	const resolution = resolveTarget(positionals[0], process.cwd(), {
-		isDirectory: (absolutePath) => {
-			try {
-				return fs.statSync(absolutePath).isDirectory();
-			} catch {
-				return false;
-			}
-		},
-		isFile: (absolutePath) => {
-			try {
-				return fs.statSync(absolutePath).isFile();
-			} catch {
-				return false;
-			}
-		},
+		isDirectory: isDirectoryPath,
+		isFile: isFilePath,
 		listFileNames: FS_DEPS.listFileNames,
 		// 引数なし(またはディレクトリ指定)のとき、その場所の slnmix.config.json の target を使う
 		readConfigTarget: (directory) =>
 			loadSlnmixConfig(directory, { readTextFile: readSourceTextFile }).config.target,
+		// 同じ場所の設定が kind: "generic" なら .sln / .vbproj を探さない
+		isGenericConfig: (directory) =>
+			loadSlnmixConfig(directory, { readTextFile: readSourceTextFile }).config.kind ===
+			"generic",
 	});
 	if (resolution.kind === "error") {
 		console.error(resolution.message);
 		console.error("\n使い方は slnmix --help を参照してください。");
 		return 1;
 	}
-	const targetPath = resolution.path;
-	if (resolution.autoDetected) {
-		console.error(
-			`対象: ${targetPath}(${resolution.source === "config" ? `${CONFIG_FILE_NAME} の target` : "自動検出"})`,
-		);
-	}
 
 	// ルート = 物理パス・設定ファイル・protocol.md / procedure.md・docs/・出力先の基準。
-	// --root > 上位の slnmix.config.json の場所 > 入力と同じ場所(rootResolver.ts)
-	const root = resolveRoot(targetPath, values.root, process.cwd(), {
-		isDirectory: (p) => {
-			try {
-				return fs.statSync(p).isDirectory();
-			} catch {
-				return false;
-			}
-		},
-		isFile: (p) => {
-			try {
-				return fs.statSync(p).isFile();
-			} catch {
-				return false;
-			}
-		},
-		exists: (p) => fs.existsSync(p),
-	});
-	if (root.kind === "error") {
-		console.error(root.message);
-		return 1;
-	}
-	const rootDir = root.rootDir;
-	if (root.reason !== "target") {
-		console.error(`ルート: ${rootDir}(${describeRootReason(root.reason)})`);
+	// solution: --root > 上位の slnmix.config.json の場所 > 入力と同じ場所(rootResolver.ts)
+	// generic: 設定ファイルの場所に固定(--root は使えない。基準が設定と食い違うため)
+	let rootDir: string;
+	let targetPath: string | undefined;
+	if (resolution.kind === "generic") {
+		if (values.root !== undefined && path.resolve(process.cwd(), values.root) !== resolution.rootDir) {
+			console.error(
+				`kind: "generic" の構成では --root は使えません(ルートは ${CONFIG_FILE_NAME} の場所: ${resolution.rootDir})。`,
+			);
+			return 1;
+		}
+		if (values["legacy-paths"]) {
+			console.error('kind: "generic" の構成では --legacy-paths は使えません(論理パスがありません)。');
+			return 1;
+		}
+		rootDir = resolution.rootDir;
+		console.error(`対象: generic 構成(${CONFIG_FILE_NAME} の kind。.sln / .vbproj は使いません)`);
+		console.error(`ルート: ${rootDir}`);
+	} else {
+		targetPath = resolution.path;
+		if (resolution.autoDetected) {
+			console.error(
+				`対象: ${targetPath}(${resolution.source === "config" ? `${CONFIG_FILE_NAME} の target` : "自動検出"})`,
+			);
+		}
+		const root = resolveRoot(targetPath, values.root, process.cwd(), {
+			isDirectory: isDirectoryPath,
+			isFile: isFilePath,
+			exists: (p) => fs.existsSync(p),
+		});
+		if (root.kind === "error") {
+			console.error(root.message);
+			return 1;
+		}
+		rootDir = root.rootDir;
+		if (root.reason !== "target") {
+			console.error(`ルート: ${rootDir}(${describeRootReason(root.reason)})`);
+		}
 	}
 
 	// docs/ 連携の初回セットアップ(パックは作らない)
@@ -432,17 +487,20 @@ function main(): number {
 		return result.errors.length === 0 ? 0 : 1;
 	}
 
-	const sources = collectSources(targetPath);
-	if (sources.length === 0) {
+	const sources = targetPath === undefined ? [] : collectSources(targetPath);
+	if (targetPath !== undefined && sources.length === 0) {
 		console.error("出力対象のプロジェクトがありません。");
 		return 1;
 	}
 
 	// Designer の含め方: --include-designer-file(選択)> --include-designer(全件)
+	// (generic 構成では Designer が無いので指定は無視する)
 	const designerFilePatterns = values["include-designer-file"] ?? [];
 	let includeSensitive: boolean | ((logicalPath: string) => boolean) =
 		values["include-designer"];
-	if (designerFilePatterns.length > 0) {
+	if (targetPath === undefined && (designerFilePatterns.length > 0 || values["include-designer"])) {
+		console.error('[warning] kind: "generic" の構成では --include-designer / --include-designer-file は無視します');
+	} else if (designerFilePatterns.length > 0) {
 		if (values["include-designer"]) {
 			console.error(
 				"[warning] --include-designer-file の指定があるため --include-designer(全件)は無視します",
@@ -468,6 +526,18 @@ function main(): number {
 	const configResult = loadSlnmixConfig(rootDir, { readTextFile: readSourceTextFile });
 	printDiagnostics("slnmix.config.json", configResult.diagnostics);
 	const config = configResult.config;
+	const layout = targetPath === undefined ? "generic" : "solution";
+	if (layout === "generic" && config.extraRoots.length === 0) {
+		console.error(
+			`出力対象のディレクトリがありません。${CONFIG_FILE_NAME} の extraRoots に少なくとも 1 つ path を書いてください(例: { "path": "src", "kind": "src" })。`,
+		);
+		return 1;
+	}
+	if (layout === "solution" && config.kind === "generic") {
+		console.error(
+			`[warning] ${CONFIG_FILE_NAME} は kind: "generic" ですが、入力に .sln / .vbproj が指定されたため従来どおり論理構成で出力します`,
+		);
+	}
 	if (config.sources.length > 0) {
 		const parts = [`extraRoots ${config.extraRoots.length} 件`];
 		if (config.contractSchema !== undefined) {
@@ -503,7 +573,7 @@ function main(): number {
 	// パック本文を先に組み立てる。手順文の「自動テスト」の節は、実際に出力する
 	// ファイル一覧(と extraRoots の kind)から有無を判定するため(autoTests.ts)
 	const output = buildRepomixOutput(
-		path.basename(targetPath),
+		targetPath === undefined ? path.basename(rootDir) : path.basename(targetPath),
 		sources,
 		{
 			readTextFile: readSourceTextFile,
@@ -523,9 +593,16 @@ function main(): number {
 			contractFile: config.contractFile,
 			generatedDirs: config.generatedDirs,
 			includeGenerated: values["include-generated"],
+			layout,
 		},
 	);
 	printDiagnostics("出力", output.diagnostics);
+	if (layout === "generic" && output.fileCount === 0) {
+		console.error(
+			`出力対象のファイルがありません(extraRoots の include / exclude と .gitignore を確認してください。除外の理由は --stdout の <skipped_files> に出ます)。`,
+		);
+		return 1;
+	}
 
 	// docs/ 連携: 文書を読み、作業モードと既定タスクを決める
 	let docs: DocsResolution | undefined;
@@ -605,6 +682,7 @@ function main(): number {
 			mode,
 			docs: docs !== undefined,
 			tests: autoTests.present,
+			layout,
 		},
 		rootDir,
 		process.cwd(),

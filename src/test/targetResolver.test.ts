@@ -160,3 +160,50 @@ suite("targetResolver: slnmix.config.json の target", () => {
 		assert.ok(result.kind === "error" && result.message.includes("見つかりません"));
 	});
 });
+
+suite("targetResolver: kind: \"generic\"(.sln / .vbproj を使わない構成)", () => {
+	const dirs = {
+		"/work/app": ["slnmix.config.json", "package.json"],
+		"/work/app/dotnet": ["App.sln"],
+	};
+	const generic = (isGeneric: boolean): TargetResolverDeps => ({
+		...fakeDeps(dirs),
+		isGenericConfig: (dir) => dir === CWD && isGeneric,
+		// generic のときは target があっても見ない(resolveTarget が先に返す)
+		readConfigTarget: (dir) => (dir === CWD ? "dotnet/App.sln" : undefined),
+	});
+
+	test("引数なし: generic 構成を返す(rootDir は設定の場所。.sln は探さない)", () => {
+		const result = resolveTarget(undefined, CWD, generic(true));
+		assert.deepStrictEqual(result, { kind: "generic", rootDir: CWD });
+	});
+
+	test("ディレクトリ指定でも generic 構成を返す", () => {
+		const result = resolveTarget(".", CWD, generic(true));
+		assert.deepStrictEqual(result, { kind: "generic", rootDir: CWD });
+	});
+
+	test("generic でなければ従来どおり(設定の target を使う)", () => {
+		const result = resolveTarget(undefined, CWD, generic(false));
+		assert.ok(result.kind === "file" && result.source === "config");
+	});
+
+	test("ファイルを明示したときは設定を見ずにそのファイルを採用する", () => {
+		const result = resolveTarget("dotnet/App.sln", CWD, generic(true));
+		assert.deepStrictEqual(result, {
+			kind: "file",
+			path: path.join(CWD, "dotnet", "App.sln"),
+			autoDetected: false,
+		});
+	});
+
+	test("deps に isGenericConfig が無ければ従来どおり", () => {
+		const result = resolveTarget(undefined, CWD, fakeDeps({ "/work/app": ["package.json"] }));
+		assert.ok(result.kind === "error" && result.message.includes("見つかりません"));
+	});
+
+	test(".sln / .vbproj が見つからないエラーには --init-config の案内が付く", () => {
+		const result = resolveTarget(undefined, CWD, fakeDeps({ "/work/app": ["package.json"] }));
+		assert.ok(result.kind === "error" && result.message.includes("--init-config"));
+	});
+});

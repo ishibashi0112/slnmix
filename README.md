@@ -119,6 +119,8 @@ npx slnmix Sub\Project.vbproj --stdout
                           状態から自動選択)
       --design <名前|file> design モードで対象の設計書を指定(なければ新規作成)
       --init-docs         docs/ 連携の初回セットアップ(一回だけ)
+      --init-config       VB.NET 以外のプロジェクト向けに slnmix.config.json
+                          (kind: "generic")を作る(一回だけ。既にあれば変えない)
       --plan <file>       implement モードで承認済みの方針を <plan> として同梱
       --procedure-file <path>
                           作業手順文を明示指定(既定: 入力と同じ場所の
@@ -174,7 +176,8 @@ web と dotnet を分けた構成(例: webview2-bridge の雛形は `dotnet/MyAp
 WinForms + WebView2 + React([webview2-bridge](https://github.com/ishibashi0112/webview2-bridge))
 のように `.vbproj` に乗らない web 側・契約側のディレクトリがある場合、ルート直下に
 `slnmix.config.json` を置くと同じパックに入ります。**なくても動きます**
-(`slnmix init` はありません)。
+(`slnmix init` はありません。`.sln` の無いプロジェクト向けの `--init-config` は
+下記「VB.NET 以外のプロジェクト」)。
 
 ```jsonc
 {
@@ -197,6 +200,7 @@ WinForms + WebView2 + React([webview2-bridge](https://github.com/ishibashi0112/w
   (ディレクトリ走査をしない原則の、明示的でスコープの狭い例外)
 - `include` の既定: `kind: web` は `**/*.{ts,tsx,js,jsx,css,json,html}`、
   `kind: contract` は `**/*.ts`、`kind: test` は `**/*.{ts,tsx,json,md}`、
+  `kind: src` は `**/*.{ts,tsx,js,jsx,mjs,cjs,css,scss,json,html,md}`、
   それ以外は `**/*`。`exclude` で追加除外
 - `kind: test`(例: `{ "path": "e2e", "kind": "test" }`)があるか、パックに
   `e2e/` 配下または `*.spec.ts` / `*.test.ts` のファイルが含まれると、手順文に
@@ -226,6 +230,52 @@ types:
 - Part { partNo: string; name: string; qty: integer; updatedAt: string(ISO 8601) }
 </contract_summary>
 ```
+
+## VB.NET 以外のプロジェクト(`kind: "generic"`、v0.17.0〜)
+
+`.sln` / `.vbproj` の無いプロジェクト(TypeScript / Node.js など)でも、
+`slnmix.config.json` に `"kind": "generic"` と `extraRoots` を書けば、同じ
+パックと本文用テキスト(`.prompt.md`)が作れます。本家 repomix との違いは
+**手順文・規約文をチャット本文に貼る形で出す**ことです。M365 Copilot Chat は
+添付ファイル内の指示を無視するため、repomix の `instructionFilePath` で末尾に
+埋めた規約文は届きません(下記「M365 Copilot Chat への渡し方」)。
+
+```console
+npx petari init          # 規約文 protocol.md(まだなければ)
+npx slnmix --init-config # slnmix.config.json を作る(一回だけ)
+npx slnmix               # repomix-output.xml と repomix-output.prompt.md ができる
+```
+
+`--init-config` は、実行した場所に実在するディレクトリだけを書きます
+(`src` / `app` / `lib` / `apps` / `packages` → `kind: "src"`、
+`tests` / `test` / `e2e` / `__tests__` → `kind: "test"`)。候補が 1 つも無ければ
+推測で書かずに設定例を表示して終わります。既に設定ファイルがあれば変えません。
+
+```jsonc
+{
+  "kind": "generic",
+  "extraRoots": [
+    { "path": "src", "kind": "src" },
+    { "path": "tests", "kind": "test" }
+  ]
+}
+```
+
+- `kind: "generic"` のときは引数なしの `npx slnmix` が `.sln` / `.vbproj` を
+  探さず、**`extraRoots` に宣言したディレクトリだけ**を走査します(ディレクトリ
+  走査をしない原則の例外はここでも `extraRoots` に限ります)。ルートは設定ファイル
+  の場所に固定で、`--root` / `--legacy-paths` / Designer 関連オプションは使えません
+- `kind: "src"` の `include` 既定は `**/*.{ts,tsx,js,jsx,mjs,cjs,css,scss,json,html,md}`。
+  他の言語なら `include` を明示してください。`node_modules/` 等の常時除外と
+  `.gitignore` の尊重はハイブリッド構成と同じです
+- 出力ヘッダーから Visual Studio / Designer / `.resx` の記述が消え、手順文
+  (`<procedure>`)も VB 固有の項目(`<ui_summary>`・`.vbproj`・`Option Strict`・
+  `Handles` 句・Shift_JIS)を外した文面になります(先頭行に `layout: generic`)。
+  VB.NET プロジェクトの出力は従来と同一です
+- docs/ 連携(`--init-docs`)、`--task` / `--mode`、自動テストの節、petari 連携は
+  そのまま使えます。petari は無改修です
+- `.sln` / `.vbproj` を引数で明示したときは設定の `kind` に関わらず従来どおり
+  論理構成で出力します(警告を表示)
 
 ## SDK スタイル .vbproj
 
@@ -384,6 +434,8 @@ npx slnmix --print-procedure --mode plan                 # モード別の文面
 書き出した文面の末尾にある `{{DOCS_SECTIONS}}` は残しておくと、docs 連携(下記)が
 有効なときに「文書の扱い」「チャットの継続と引継ぎ」の 2 節に置換されます。同じく
 `{{TEST_SECTIONS}}` は自動テストがあるとき(上記)に「自動テスト」の節に置換されます。
+`kind: "generic"` の場所で `--print-procedure` を実行すると、VB 固有の項目を外した
+generic 向けの文面が書き出されます(`{{LAYOUT:...}}` は置換済み)。
 
 ## プロジェクト文書の連携(`docs/` — 設計書・仕様書・引継ぎ書)
 
