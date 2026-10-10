@@ -9,6 +9,8 @@
  *   しない原則の、明示的でスコープの狭い例外)
  * - contractSchema / generatedDirs: 同じ場所に webview2-bridge.gen.json が
  *   あれば自動検出して既定値にする。明示すれば上書き
+ * - kind: "generic"(v0.17.0〜)で .sln / .vbproj のないプロジェクト(TypeScript 等)
+ *   を extraRoots だけでパックする。既定は "solution"(従来どおり)
  *
  * 壊れた設定でもクラッシュせず、診断に残して設定なしとして続行する。
  * ファイルシステムは deps 注入(単体テスト可能)。
@@ -46,7 +48,24 @@ export interface DocsConfig {
 	handoff: string;
 }
 
+/**
+ * プロジェクトの構成の種類。
+ * - "solution": .sln / .vbproj の論理構成に基づく(既定。従来どおり)
+ * - "generic": .sln / .vbproj を使わず、extraRoots に宣言されたディレクトリだけで
+ *   パックする(VB.NET 以外のプロジェクト向け。v0.17.0〜)。引数なしの `npx slnmix`
+ *   がこの設定を見て .sln の探索を省く。明示フラグにしたのは「.sln を探さなかった」
+ *   理由をログで示すため(決定ログ 2026-10-10)
+ */
+export const CONFIG_KINDS = ["solution", "generic"] as const;
+export type ConfigKind = (typeof CONFIG_KINDS)[number];
+
+export function isConfigKind(value: string): value is ConfigKind {
+	return (CONFIG_KINDS as readonly string[]).includes(value);
+}
+
 export interface SlnmixConfig {
+	/** 構成の種類(省略時 "solution") */
+	kind: ConfigKind;
 	/**
 	 * 入力(.sln / .vbproj)のルート相対パス。引数なしの `npx slnmix` がこれを使う
 	 * (web + dotnet を分けた構成で .sln がサブディレクトリにあるとき用)
@@ -77,6 +96,8 @@ export interface SlnmixConfigResult {
 /** kind ごとの include 既定 */
 const DEFAULT_INCLUDE: Readonly<Record<string, readonly string[]>> = {
 	web: ["**/*.{ts,tsx,js,jsx,css,json,html}"],
+	/** VB.NET 以外のプロジェクトのソース(kind: "generic" の --init-config が使う) */
+	src: ["**/*.{ts,tsx,js,jsx,mjs,cjs,css,scss,json,html,md}"],
 	contract: ["**/*.ts"],
 	/** 自動テスト(e2e/ 等)。kind: "test" があれば手順文に「自動テスト」の節が入る */
 	test: ["**/*.{ts,tsx,json,md}"],
@@ -272,6 +293,22 @@ function parseDocsConfig(
 	return { design: pick("design"), spec: pick("spec"), handoff: pick("handoff") };
 }
 
+/** `kind`: "solution" / "generic"。それ以外は警告して既定の "solution" */
+function parseKind(value: unknown, diagnostics: ParseDiagnostic[]): ConfigKind {
+	if (value === undefined) {
+		return "solution";
+	}
+	const text = asString(value)?.trim();
+	if (text !== undefined && isConfigKind(text)) {
+		return text;
+	}
+	diagnostics.push({
+		severity: "warning",
+		message: `${CONFIG_FILE_NAME}: kind は ${CONFIG_KINDS.map((k) => `"${k}"`).join(" / ")} のいずれかを指定してください: ${String(value)}(既定の "solution" を使います)`,
+	});
+	return "solution";
+}
+
 const TARGET_EXTENSION = /\.(sln|vbproj)$/i;
 
 /** `target`: ルート配下の相対パスで .sln / .vbproj を指す。それ以外は警告して無視 */
@@ -313,7 +350,12 @@ export function loadSlnmixConfig(
 	deps: SlnmixConfigDeps,
 ): SlnmixConfigResult {
 	const diagnostics: ParseDiagnostic[] = [];
-	const config: SlnmixConfig = { extraRoots: [], generatedDirs: [], sources: [] };
+	const config: SlnmixConfig = {
+		kind: "solution",
+		extraRoots: [],
+		generatedDirs: [],
+		sources: [],
+	};
 
 	let explicitSchema: string | undefined;
 	let explicitContractFile: string | undefined;
@@ -342,11 +384,25 @@ export function loadSlnmixConfig(
 		}
 		if (isRecord(parsed)) {
 			config.sources.push(CONFIG_FILE_NAME);
+			config.kind = parseKind(parsed["kind"], diagnostics);
 			const target = parseTarget(parsed["target"], diagnostics);
 			if (target !== undefined) {
-				config.target = target;
+				if (config.kind === "generic") {
+					diagnostics.push({
+						severity: "warning",
+						message: `${CONFIG_FILE_NAME}: kind が "generic" のため target は使いません(無視します): ${target}`,
+					});
+				} else {
+					config.target = target;
+				}
 			}
 			config.extraRoots = parseExtraRoots(parsed["extraRoots"], diagnostics);
+			if (config.kind === "generic" && config.extraRoots.length === 0) {
+				diagnostics.push({
+					severity: "warning",
+					message: `${CONFIG_FILE_NAME}: kind が "generic" のときは extraRoots に少なくとも 1 つのディレクトリが必要です(出力対象がありません)`,
+				});
+			}
 			config.docs = parseDocsConfig(parsed["docs"], diagnostics);
 			const schema = asString(parsed["contractSchema"]);
 			if (schema !== undefined && schema.trim() !== "") {

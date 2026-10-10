@@ -766,3 +766,72 @@ suite("repomixExporter: ルートが .sln より上にある構成(nested-root f
 		assert.ok(result.filePaths.includes("e2e/screen/main.spec.ts"));
 	});
 });
+
+// ---------------------------------------------------------------------------
+// v0.17.0: generic 構成(.sln / .vbproj なし。extraRoots のみ)
+// ---------------------------------------------------------------------------
+
+suite("repomixExporter: generic 構成(layout: generic、hybrid fixture の web 側のみ)", () => {
+	const rootDir = path.join(FIXTURES_ROOT, "hybrid");
+	const extraRoots = [
+		{ path: "apps/web", kind: "src", include: ["**/*.{ts,tsx,js,jsx,css,json,html}"], exclude: [] },
+	];
+	const result = buildRepomixOutput("hybrid", [], realDeps, {
+		includeSensitive: false,
+		maskCredentials: true,
+		rootDir,
+		extraRoots,
+		layout: "generic",
+	});
+
+	test("ソースが空でも extraRoots のファイルだけでパックになる", () => {
+		assert.ok(result.fileCount > 0);
+		assert.strictEqual(result.fileCount, result.extraRootFileCount);
+		assert.ok(result.content.includes('<file path="apps/web/src/App.tsx" root="src">'));
+		assert.ok(result.content.includes("[src] apps/web/\n  src/\n"));
+	});
+
+	test("ヘッダーは extraRoots に基づく旨を述べ、Visual Studio / Designer / .resx / Link の記述を持たない", () => {
+		assert.ok(result.content.includes("「hybrid」の slnmix.config.json(extraRoots)に宣言されたディレクトリに基づき"));
+		assert.ok(result.content.includes(".sln / .vbproj の論理構成は使っていない"));
+		assert.ok(result.content.includes("ルート「hybrid」からの相対物理パス(/ 区切り)"));
+		assert.ok(result.content.includes("新規ファイルも同じ規則で書くこと"));
+		assert.ok(result.content.includes("宣言されていないディレクトリは含まれない"));
+		for (const phrase of [
+			"Visual Studio",
+			"Designer",
+			"EmbeddedResource",
+			"Link",
+			"置きたいプロジェクトの物理フォルダ配下",
+			".vbproj に乗らない",
+			"VB 側と同様",
+		]) {
+			assert.ok(!result.content.includes(phrase), `${phrase} が残っています`);
+		}
+	});
+
+	test("認証情報マスク・.gitignore・skipped の共通の注記は残る", () => {
+		assert.ok(result.content.includes("[MASKED] に自動置換済み"));
+		assert.ok(result.content.includes("<skipped_files>"));
+		assert.ok(result.content.includes('const API_KEY = "[MASKED]";'));
+	});
+
+	test("layout 省略(solution)の出力は従来と同一", () => {
+		const base = buildRepomixOutput("Hybrid.sln", [], realDeps, {
+			includeSensitive: false,
+			maskCredentials: true,
+			rootDir,
+			extraRoots,
+		});
+		const explicit = buildRepomixOutput("Hybrid.sln", [], realDeps, {
+			includeSensitive: false,
+			maskCredentials: true,
+			rootDir,
+			extraRoots,
+			layout: "solution",
+		});
+		assert.strictEqual(base.content, explicit.content);
+		assert.ok(base.content.includes("論理構成(.sln / .vbproj)に基づき"));
+		assert.ok(base.content.includes("Designer 関連ファイルの原文は含まれない"));
+	});
+});

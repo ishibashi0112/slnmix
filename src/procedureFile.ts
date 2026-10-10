@@ -36,6 +36,8 @@
 
 import * as path from "path";
 import {
+	DEFAULT_PROCEDURE_LAYOUT,
+	type ProcedureLayout,
 	type ProcedureMode,
 	renderBuiltinProcedure,
 	renderProcedureTemplate,
@@ -131,6 +133,8 @@ export interface ProcedureOptions {
 	docs?: boolean;
 	/** 自動テストがあるか(手順文に「自動テスト」の節を入れる。autoTests.ts の判定) */
 	tests?: boolean;
+	/** 構成の種類(slnmix.config.json の kind。省略時 "solution") */
+	layout?: ProcedureLayout;
 }
 
 /**
@@ -147,7 +151,11 @@ export function resolveProcedure(
 		return { kind: "none" };
 	}
 	const { mode } = options;
-	const render = { docs: options.docs === true, tests: options.tests === true };
+	const render = {
+		docs: options.docs === true,
+		tests: options.tests === true,
+		layout: options.layout ?? DEFAULT_PROCEDURE_LAYOUT,
+	};
 	if (options.explicitPath !== undefined) {
 		const absolutePath = path.resolve(cwd, options.explicitPath);
 		const template = deps.readTextFile(absolutePath);

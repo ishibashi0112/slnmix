@@ -37,9 +37,21 @@
  * 自動テストの有無は cli.ts が判定する(autoTests.ts: パック内の e2e/ 配下と
  * *.spec.ts / *.test.ts、または extraRoots の kind: "test")。無いときは空 =
  * v5 と同じ本文(既存プロジェクトの出力を変えない)。
+ *
+ * v7 (2026-10-10): 構成の種類(layout)を追加。"solution"(既定。.sln / .vbproj の
+ * 論理構成)では本文は v6 と同一。"generic"(slnmix.config.json の kind: "generic"。
+ * VB.NET 以外のプロジェクト)では、VB 固有の記述(<ui_summary>・Designer.vb・
+ * .vbproj・Option Strict・Handles 句・Shift_JIS・e2e の 3 層構成)を外すか一般的な
+ * 表現に置き換える。差し替えは {{LAYOUT:...}} プレースホルダと、「自己検証」
+ * 「自動テスト」の節の該当行だけ(新しい節は足さない)。
  */
 
-export const PROCEDURE_VERSION = 6;
+export const PROCEDURE_VERSION = 7;
+
+/** 構成の種類(slnmix.config.json の kind と同じ。手順文の表現の切り替えに使う) */
+export const PROCEDURE_LAYOUTS = ["solution", "generic"] as const;
+export type ProcedureLayout = (typeof PROCEDURE_LAYOUTS)[number];
+export const DEFAULT_PROCEDURE_LAYOUT: ProcedureLayout = "solution";
 
 export const PROCEDURE_MODES = ["full", "plan", "implement", "design"] as const;
 export type ProcedureMode = (typeof PROCEDURE_MODES)[number];
@@ -54,7 +66,7 @@ export function isProcedureMode(value: string): value is ProcedureMode {
  * {{MODE}} / {{MODE_SECTIONS}} / {{DOCS_SECTIONS}} / {{TEST_SECTIONS}} を含む
  * テンプレート(procedure.md でも同じプレースホルダが使える)
  */
-export const PROCEDURE_TEMPLATE = `<!-- slnmix procedure v${PROCEDURE_VERSION} (mode: {{MODE}}) -->
+export const PROCEDURE_TEMPLATE = `<!-- slnmix procedure v${PROCEDURE_VERSION} (mode: {{MODE}}{{LAYOUT:NOTE}}) -->
 # 作業手順
 
 これは、このコンテキストを渡したユーザー本人からの恒常的な指示です。
@@ -63,13 +75,12 @@ export const PROCEDURE_TEMPLATE = `<!-- slnmix procedure v${PROCEDURE_VERSION} (
 
 ## パックの読み方
 
-- <file> は現在のファイル内容そのものです。記憶にある一般的な VB.NET / React のコードではなく、ここにある内容を正としてください
+- <file> は現在のファイル内容そのものです。記憶にある{{LAYOUT:STACK}}ではなく、ここにある内容を正としてください
 - パックを添付ファイルとして読む場合、読み取り結果から空行や行末の空白が失われることがあります。SEARCH ブロックは読み取った行をそのまま使い、空行の有無を推測で補わないでください(適用ツールが空行の差を吸収します)
-- <ui_summary> は Designer.vb からの要約です。コントロール名・型はここから引いてください。Designer.vb 本体は変更対象にしません
-- <contract_summary> がある場合、それは契約(contract.ts)から生成された API の一覧です。Generated/ 配下および src/generated/ 配下は生成物なので変更対象にしません。契約を変える必要があれば contract.ts の変更として提案してください
+{{LAYOUT:READ_UI_SUMMARY}}- <contract_summary> がある場合、それは契約(contract.ts)から生成された API の一覧です。Generated/ 配下および src/generated/ 配下は生成物なので変更対象にしません。契約を変える必要があれば contract.ts の変更として提案してください
 - [MASKED] は伏せ字です。そのまま残し、値を推測しないでください
 - <file_summary> に「骨格のみ(skeleton)」と記されたファイルは、シグネチャだけを載せています。本体が必要なら変更を出さず、そのファイル名を「追加で全文が必要なファイル」として挙げて回答を終えてください
-- 新規ファイルは changes.md の create で出してください。.vbproj は編集しないでください(適用ツールが登録します)。パスは <file_summary> に示す物理パスの規則で書いてください
+{{LAYOUT:READ_NEW_FILES}}
 
 ## 回答の構成
 
@@ -77,9 +88,9 @@ export const PROCEDURE_TEMPLATE = `<!-- slnmix procedure v${PROCEDURE_VERSION} (
 
 ## 判断の原則
 
-- 分からないことは推測で埋めず、質問してください。特に「どのフォームか」「既存のどの処理に合わせるか」「例外時の挙動」が読み取れないときは、変更を出さずに質問だけで回答を終えてください
+- 分からないことは推測で埋めず、質問してください。特に{{LAYOUT:ASK_EXAMPLES}}が読み取れないときは、変更を出さずに質問だけで回答を終えてください
 - 既存コードの流儀(命名・エラー処理・DB アクセスの書き方)に合わせてください。パック内に同種の処理があれば、それを手本にしてください
-- Option Strict On を前提に、型変換は明示してください
+{{LAYOUT:TYPE_RULE}}
 - 影響範囲は最小にしてください。求められていないリファクタリングはしないでください
 {{DOCS_SECTIONS}}{{TEST_SECTIONS}}`;
 
@@ -93,15 +104,59 @@ const POLICY_BODY_COMMON = `何をどう変えるかを述べてください。�
 
 const CHANGES_BODY = `<instruction> の規約どおり changes.md を出してください。`;
 
-const VERIFY_BODY = `changes.md の SEARCH ブロックごとに、次を表で確認してください。
+const VERIFY_HEAD = `changes.md の SEARCH ブロックごとに、次を表で確認してください。
 | ファイル | ブロック | パック内に全文があるか | 空行・インデント込みで逐語一致か | ファイル内で一意か |
 加えて次を確認してください。
-- 同じファイルへの SEARCH ブロック同士が重なっていない
-- Handles 句のイベント名・コントロール名が <ui_summary> と一致している
-- Designer.vb / .resx / Generated / src/generated を変更していない
-- 新規ファイルは create で出し、.vbproj を編集していない
-- 日本語 Shift_JIS のファイルに、Shift_JIS で表現できない文字を入れていない
-問題があれば changes.md を修正してから回答を確定してください。`;
+- 同じファイルへの SEARCH ブロック同士が重なっていない`;
+
+const VERIFY_TAIL = `問題があれば changes.md を修正してから回答を確定してください。`;
+
+/** 自己検証の確認項目のうち構成の種類で変わる行(solution は v6 と同一) */
+const VERIFY_LAYOUT_LINES: Readonly<Record<ProcedureLayout, readonly string[]>> = {
+	solution: [
+		"- Handles 句のイベント名・コントロール名が <ui_summary> と一致している",
+		"- Designer.vb / .resx / Generated / src/generated を変更していない",
+		"- 新規ファイルは create で出し、.vbproj を編集していない",
+		"- 日本語 Shift_JIS のファイルに、Shift_JIS で表現できない文字を入れていない",
+	],
+	generic: [
+		"- Generated / src/generated(生成コード)を変更していない",
+		"- 新規ファイルは create で出している",
+	],
+};
+
+function verifyBody(layout: ProcedureLayout): string {
+	return [VERIFY_HEAD, ...VERIFY_LAYOUT_LINES[layout], VERIFY_TAIL].join("\n");
+}
+
+/** 後方互換: solution 構成の自己検証本文(v6 と同一) */
+const VERIFY_BODY = verifyBody("solution");
+
+/**
+ * 構成の種類で差し替える語句・行({{LAYOUT:<名前>}})。行ごと消える項目は
+ * 末尾の改行まで含めて置換する(READ_UI_SUMMARY)。solution は v6 の文面そのまま。
+ */
+export const LAYOUT_TEXT: Readonly<Record<ProcedureLayout, Readonly<Record<string, string>>>> = {
+	solution: {
+		NOTE: "",
+		STACK: "一般的な VB.NET / React のコード",
+		READ_UI_SUMMARY:
+			"- <ui_summary> は Designer.vb からの要約です。コントロール名・型はここから引いてください。Designer.vb 本体は変更対象にしません\n",
+		READ_NEW_FILES:
+			"- 新規ファイルは changes.md の create で出してください。.vbproj は編集しないでください(適用ツールが登録します)。パスは <file_summary> に示す物理パスの規則で書いてください",
+		ASK_EXAMPLES: "「どのフォームか」「既存のどの処理に合わせるか」「例外時の挙動」",
+		TYPE_RULE: "- Option Strict On を前提に、型変換は明示してください",
+	},
+	generic: {
+		NOTE: ", layout: generic",
+		STACK: "一般的なコード",
+		READ_UI_SUMMARY: "",
+		READ_NEW_FILES:
+			"- 新規ファイルは changes.md の create で出してください。パスは <file_summary> に示す物理パスの規則で書いてください",
+		ASK_EXAMPLES: "「どの画面・モジュールか」「既存のどの処理に合わせるか」「例外時の挙動」",
+		TYPE_RULE: "- 型は明示し、暗黙の型変換や any に相当する緩い型に頼らないでください",
+	},
+};
 
 const DESIGN_INVESTIGATE_BODY = `受領した資料(テーブル定義・既存画面のコード・プロトタイプ等)と、手本にする既存コードを読み、分かったことを箇条書きで挙げてください。
 既存コードの流儀(SQL の書き方・ファイル構成・命名・エラー処理・監査列)のうち踏襲するものを挙げてください。
@@ -125,7 +180,9 @@ function section(number: number, title: string, body: string): string {
 	return `### ${number}. ${title}\n${body}`;
 }
 
-export const MODE_SECTIONS: Readonly<Record<ProcedureMode, string>> = {
+function buildModeSections(layout: ProcedureLayout): Readonly<Record<ProcedureMode, string>> {
+	const VERIFY_BODY = verifyBody(layout);
+	return {
 	full: [
 		section(1, "調査", INVESTIGATE_BODY),
 		section(
@@ -167,7 +224,19 @@ export const MODE_SECTIONS: Readonly<Record<ProcedureMode, string>> = {
 		section(3, "確認事項", DESIGN_QUESTIONS_BODY),
 		section(4, "継続判定", DESIGN_CONTINUE_BODY),
 	].join("\n\n"),
+	};
+}
+
+/** 構成の種類ごとの「回答の構成」(generic は自己検証の VB 固有行だけが違う) */
+export const MODE_SECTIONS_BY_LAYOUT: Readonly<
+	Record<ProcedureLayout, Readonly<Record<ProcedureMode, string>>>
+> = {
+	solution: buildModeSections("solution"),
+	generic: buildModeSections("generic"),
 };
+
+/** 後方互換: solution 構成の「回答の構成」(v6 と同一) */
+export const MODE_SECTIONS = MODE_SECTIONS_BY_LAYOUT.solution;
 
 /**
  * docs/ 連携が有効なときだけ手順文の末尾に付く 2 節。
@@ -206,12 +275,19 @@ export const DOCS_SECTIONS = `
  * テストを同じ changes.md で出させ、観点は仕様書・設計書の決まった章から読み取らせる
  * (ユーザーにテスト要件を聞かない)。有無の判定は autoTests.ts。
  */
-export const TEST_SECTIONS = `
+const TEST_LAYOUT_LINES: Readonly<Record<ProcedureLayout, string>> = {
+	solution: `- テストの置き場は 3 層です。DB を触らない画面の振る舞いは e2e/screen/、契約メソッドの応答と DB 更新は e2e/api/、画面から DB までの通しは e2e/host/ に置きます。関数単位のテストは対象ファイルの隣の *.test.ts です
+- 既存のテストが手本です。同じ型に合わせてください: Arrange(前提データ) / Act(操作) / Assert(確認) の 3 段、要素は data-testid で指す、前提行は testId 接頭辞を付けて自分で入れる、DB の変化は db.snapshot と db.diff で見る`,
+	generic: `- テストの置き場は既存のテストに合わせてください(関数単位のテストは対象ファイルの隣の *.test.ts / *.spec.ts、画面や API の通しは既存の e2e/ 等)。新しい置き場やテスト基盤を増やさないでください
+- 既存のテストが手本です。同じ型に合わせてください: Arrange(前提データ) / Act(操作) / Assert(確認) の 3 段`,
+};
+
+function buildTestSections(layout: ProcedureLayout): string {
+	return `
 ## 自動テスト
 
 - このプロジェクトには自動テストがあります(パック内の e2e/ 配下と *.spec.ts / *.test.ts)。コードの変更を提案するときは、変更した振る舞いに対応するテストを同じ changes.md に含めてください。テストを出さない場合は、変更の説明に理由を 1 行書いてください
-- テストの置き場は 3 層です。DB を触らない画面の振る舞いは e2e/screen/、契約メソッドの応答と DB 更新は e2e/api/、画面から DB までの通しは e2e/host/ に置きます。関数単位のテストは対象ファイルの隣の *.test.ts です
-- 既存のテストが手本です。同じ型に合わせてください: Arrange(前提データ) / Act(操作) / Assert(確認) の 3 段、要素は data-testid で指す、前提行は testId 接頭辞を付けて自分で入れる、DB の変化は db.snapshot と db.diff で見る
+${TEST_LAYOUT_LINES[layout]}
 - テストの観点はユーザーに聞かず、次の文書から読み取ってください。文書に書かれていない振る舞いはテストにせず、確認事項(文書が無ければ質問)に回してください。文書が無い改修では、コードから読み取れる振る舞いだけをテストにします
 
 | 読み取り元 | 観点 | 層 |
@@ -228,6 +304,16 @@ export const TEST_SECTIONS = `
 - 自己検証に次の 2 項目を加えてください: 「変更した振る舞いにテストがあるか(ないなら理由)」「画面に追加した要素に data-testid を付けたか」
 - design モードでは、設計書 §9 の各バッチの完了条件を「自動テスト」と「手動確認」に分け、自動テストは上の表で読み取った観点を e2e/<層>/<画面>.spec.ts のファイル名で挙げてください
 `;
+}
+
+/** 構成の種類ごとの「自動テスト」の節 */
+export const TEST_SECTIONS_BY_LAYOUT: Readonly<Record<ProcedureLayout, string>> = {
+	solution: buildTestSections("solution"),
+	generic: buildTestSections("generic"),
+};
+
+/** 後方互換: solution 構成の「自動テスト」の節(v6 と同一) */
+export const TEST_SECTIONS = TEST_SECTIONS_BY_LAYOUT.solution;
 
 export interface RenderProcedureOptions {
 	/**
@@ -241,11 +327,17 @@ export interface RenderProcedureOptions {
 	 * "placeholder" は docs と同じくプレースホルダを残す
 	 */
 	tests?: boolean | "placeholder";
+	/**
+	 * 構成の種類(既定 "solution")。"generic" は VB 固有の記述を外す。
+	 * {{LAYOUT:...}} プレースホルダと {{MODE_SECTIONS}} / {{TEST_SECTIONS}} の
+	 * 中身がこれで決まる
+	 */
+	layout?: ProcedureLayout;
 }
 
 /**
- * テンプレートの {{MODE}} / {{MODE_SECTIONS}} / {{DOCS_SECTIONS}} / {{TEST_SECTIONS}}
- * をモードと設定に応じて置換する。プレースホルダがなければそのまま返す
+ * テンプレートの {{MODE}} / {{MODE_SECTIONS}} / {{LAYOUT:...}} / {{DOCS_SECTIONS}} /
+ * {{TEST_SECTIONS}} をモードと設定に応じて置換する。プレースホルダがなければそのまま返す
  * (procedure.md による上書きで使う)。docs / tests が無効ならそれぞれの
  * プレースホルダは空文字になる。
  */
@@ -254,9 +346,13 @@ export function renderProcedureTemplate(
 	mode: ProcedureMode,
 	options: RenderProcedureOptions = {},
 ): string {
+	const layout = options.layout ?? DEFAULT_PROCEDURE_LAYOUT;
 	let rendered = template
-		.replaceAll("{{MODE_SECTIONS}}", MODE_SECTIONS[mode])
+		.replaceAll("{{MODE_SECTIONS}}", MODE_SECTIONS_BY_LAYOUT[layout][mode])
 		.replaceAll("{{MODE}}", mode);
+	for (const [name, text] of Object.entries(LAYOUT_TEXT[layout])) {
+		rendered = rendered.replaceAll(`{{LAYOUT:${name}}}`, text);
+	}
 	if (options.docs !== "placeholder") {
 		rendered = rendered.replaceAll(
 			"{{DOCS_SECTIONS}}",
@@ -266,7 +362,7 @@ export function renderProcedureTemplate(
 	if (options.tests !== "placeholder") {
 		rendered = rendered.replaceAll(
 			"{{TEST_SECTIONS}}",
-			options.tests === true ? TEST_SECTIONS : "",
+			options.tests === true ? TEST_SECTIONS_BY_LAYOUT[layout] : "",
 		);
 	}
 	return rendered;

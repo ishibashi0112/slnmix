@@ -728,6 +728,12 @@ End Class
 
 ---
 
+| 2026-10-10 | VB.NET 以外のプロジェクト(TypeScript 等)向けに `slnmix.config.json` の `kind: "generic"` を追加(v0.17.0、§19)。`.sln` / `.vbproj` を探さず `extraRoots` だけでパックする。切り替えは明示フラグ(`target` 省略 + `extraRoots` での暗黙切り替えは採らない) | 実運用で TS プロジェクトを本家 repomix で代用し、本文用テキスト(`.prompt.md`)が無いために規約文が Copilot に届かず petari のパース失敗が続いた(2026-10-10 利用者報告、M365 Copilot / Opus 5.5)。明示フラグなら「.sln を探さなかった」理由がログに出る。設定の無い既存プロジェクトの挙動は不変 |
+| 2026-10-10 | 手順文 v7: 構成の種類(layout)で VB 固有の記述を差し替える。solution の本文は v6 と同一(版数の行のみ)。差し替えは `{{LAYOUT:...}}` プレースホルダ 6 箇所と「自己検証」「自動テスト」の該当行だけで、新しい節は足さない | テスト節(v6)と同じ「既存プロジェクトの出力を変えない」方針。generic 向けに別テンプレートを持つと二重管理になる |
+| 2026-10-10 | `--init-config` は実在するディレクトリ(src / app / lib / apps / packages → `kind: "src"`、tests / test / e2e / `__tests__` → `kind: "test"`)だけを書き、候補が無ければ推測せずエラー + 設定例。既存の設定は変えない | 原則 5(推測で補完しない)。`slnmix init` を作らない決定(2026-09-11)は「必須セットアップは petari init 一回」の意味で、任意機能の scaffold(`--init-docs` と同じ位置づけ)はそれと矛盾しない |
+| 2026-10-10 | generic 構成では `--root` / `--legacy-paths` / Designer 関連オプションは使えない(エラーまたは警告)。`.sln` を引数で明示したときは `kind` に関わらず従来どおり論理構成で出力する(警告) | ルートは設定の場所に固定する方が petari のルートと一致しやすい。明示入力を無視すると利用者の意図を黙って覆す |
+| 2026-10-10 | petari は無改修。generic 構成の `<file path>` は従来と同じルート相対の物理パスで、`newFile.encoding "auto"` と手本収集はそのまま効く。`.vbproj` 自動登録は対象ファイルが無いので何もしない | 変更が必要な根拠がない |
+
 ## 18. フェーズ 6 — docs/ 連携とモード自動選択（slnmix、2026-09-15 追加、v0.14.0 で実装）
 
 ### 18.1 狙い
@@ -797,3 +803,26 @@ End Class
 - テスト: `docs.test.ts` / `initDocs.test.ts` / `slnmixConfig.test.ts` / `procedureFile.test.ts` / `procedure.test.ts`（`test-fixtures/procedure/<mode>.md` と `<mode>.docs.md`）
 - petari は無改修。設計書のサンプル（64K）で design モードの本文用テキストは約 81K、引継ぎ書のサンプル（16K）で full モードは約 29K（いずれも貼付上限内）
 - 未対応（意図的スコープ外）: 引継ぎ書の段階別保存、設計書本文からの確認事項の自動集計（状態行を AI が保つ前提）、petari 側での文書 lint
+
+## 19. VB.NET 以外のプロジェクトへの対応(`kind: "generic"`、2026-10-10 追加、v0.17.0 で実装)
+
+### 19.1 狙い
+
+TypeScript 等の `.sln` / `.vbproj` の無いプロジェクトで、slnmix → M365 Copilot Chat → petari の流れをそのまま使えるようにする。実運用(2026-10-10 利用者報告)では slnmix を本家 repomix で代用した結果、本文用テキスト(`.prompt.md`)が作れず、添付末尾に埋めた規約文は Copilot(Opus 5.5)に無視され、AI の返答が changes.md の規約から外れて petari のパース失敗(§3.5 の寛容パースでも曖昧さが残る形)が続いた。失敗の大半は「規約文と手順文が本文に届かない」一点に帰着するため、slnmix 側で `.sln` 必須の制約を外すのが最も効く。
+
+### 19.2 仕様
+
+- `slnmix.config.json` のトップレベルに `"kind": "solution" | "generic"`(省略時 `solution`)。`generic` では引数なし(またはディレクトリ指定)の `npx slnmix` が `.sln` / `.vbproj` を探さず、`extraRoots` に宣言されたディレクトリだけでパックする(`targetResolver.ts` が `{ kind: "generic", rootDir }` を返す)。`target` があれば警告して無視。`extraRoots` が空なら警告し、CLI はエラーで止める
+- ルートは設定ファイルの場所に固定。`--root`(設定の場所と異なる値)・`--legacy-paths` はエラー、`--include-designer` / `--include-designer-file` は警告して無視。`.sln` / `.vbproj` を引数で明示したときは `kind` に関わらず従来どおり(警告を 1 行)
+- 出力(`repomixExporter.ts` の `layout: "generic"`): ヘッダー 1 行目を「slnmix.config.json(extraRoots)に宣言されたディレクトリに基づき」に、`<purpose>` を「ルートからの相対物理パスに基づく(論理構成は使っていない)」に変え、Visual Studio / Link / EmbeddedResource / Designer の注記を外す。`extraRoots` の注記は「宣言されていないディレクトリは含まれない」。`solution` の出力はバイト単位で従来と同一(HEAD ビルドとの比較で確認済み: solution / hybrid / nested-root / sdk-style / basic)
+- 手順文 v7(`assets/procedure.ts`): `RenderProcedureOptions.layout`。`{{LAYOUT:NOTE | STACK | READ_UI_SUMMARY | READ_NEW_FILES | ASK_EXAMPLES | TYPE_RULE}}` の 6 箇所と、「自己検証」の VB 固有 4 行(generic では「生成コードを変更していない」「新規ファイルは create で出している」の 2 行)、「自動テスト」の置き場 2 行(generic では「既存のテストに合わせる」)を差し替える。先頭行は `(mode: full, layout: generic)`。`--print-procedure` はカレント(または `--root`)の設定の `kind` に従う。スナップショットは `test-fixtures/procedure/<mode>.generic.md` / `<mode>.generic.docs.tests.md`
+- `--init-config`(`initConfig.ts`): 実行した場所(または `--root` / 位置引数のディレクトリ)に `slnmix.config.json` を作る。実在するディレクトリだけを `extraRoots` に書く(src / app / lib / apps / packages → `kind: "src"`、tests / test / e2e / `__tests__` → `kind: "test"`)。既存の設定は変えない(冪等)。`.sln` / `.vbproj` がある場所、ソース候補が無い場所はエラー(後者は設定例を表示)。`.sln` が見つからないときの従来のエラーにも `--init-config` の案内を 1 行足す
+- `kind: "src"` の `include` 既定: `**/*.{ts,tsx,js,jsx,mjs,cjs,css,scss,json,html,md}`(`slnmixConfig.ts` の `DEFAULT_INCLUDE`)
+- docs/ 連携・`--task` / `--mode` / `--plan`・自動テストの判定(`autoTests.ts`)・protocol.md の連結・`.prompt.md` の生成は無改修でそのまま効く。petari も無改修
+
+### 19.3 未対応(意図的スコープ外)
+
+- `.gitignore` 以外の除外設定の自動検出(`.repomixignore` は従来どおり尊重)
+- `tsconfig.json` / `package.json` からのソースディレクトリ推定(原則 5。候補名の実在だけを見る)
+- generic 構成での `<ui_summary>` 相当(React コンポーネントの要約など)。必要になったら別フェーズ
+- 手順文の「自動テスト」の観点表(仕様書・設計書の § 参照)は generic でも共通。表の「層」列(screen / api / host)は webview2-bridge 由来だが、文書のひな型が共通のため残している
