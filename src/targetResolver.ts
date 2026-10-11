@@ -134,7 +134,7 @@ function detectInDirectory(
 		kind: "error",
 		message: [
 			`${displayName} に .sln / .vbproj が見つかりません: ${directory}`,
-			`VB.NET 以外のプロジェクトなら npx slnmix --init-config で ${CONFIG_FILE_NAME}(kind: "generic")を作ってください。`,
+			`初めてなら npx slnmix init でセットアップしてください(VB.NET 以外のプロジェクトは ${CONFIG_FILE_NAME} の kind: "generic" で動きます)。`,
 		].join("\n"),
 	};
 }

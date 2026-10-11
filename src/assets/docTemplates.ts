@@ -441,10 +441,10 @@ export const DOC_TEMPLATES: Readonly<Record<DocKind, string>> = {
 	handoff: HANDOFF_TEMPLATE,
 };
 
-/** slnmix --init-docs が docs/README.md として書く説明文 */
+/** slnmix init / --init-docs が docs/README.md として書く説明文 */
 export const DOCS_README = `# docs/ — AI チャットと共有するプロジェクト文書
 
-このフォルダは slnmix(\`--init-docs\`)が作成しました。slnmix はここにある文書を
+このフォルダは slnmix(\`slnmix init\` / \`--init-docs\`)が作成しました。slnmix はここにある文書を
 パック(repomix-output.xml)の \`<docs>\` に含め、文書の状態から作業モードを自動で
 決めます。文書の作成・更新は AI が changes.md で出し、petari が保存します。
 

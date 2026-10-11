@@ -41,12 +41,12 @@
 
 ## 2. 原則（実装判断の基準）
 
-1. **必須セットアップは `petari init` 一回のみ。** slnmix は設定ファイルなしで動く。`slnmix init` は作らない。カスタマイズしたい人だけ `procedure.md` / `slnmix.config.json` を置く
+1. **必須セットアップは `npx slnmix init` 一回のみ。** slnmix は設定ファイルなしでも動く。カスタマイズしたい人だけ `procedure.md` / `slnmix.config.json` を置く(2026-10-11 改訂。旧: 「`petari init` 一回のみ。`slnmix init` は作らない」。§20)
 2. **削るより、抜け落ちないことを優先。** 既定は全件出力。絞り込みは明示オプション。外したものは骨格として残し、一覧で明示する。黙って捨てない（既存方針の継承）
 3. **推測しない。推測したときは宣言する。** MSBuild 完全評価はしない（既存方針）。SDK スタイルの既定グロブ展開のように推測を伴う処理は、出力に「展開した」と明記する
 4. **解析コアは slnmix が単独で持つ。** legacy_vb_workbench との二重管理は終了。workbench は凍結（§13）
-5. **petari は「vbproj 対応 create」「新規ファイルのエンコーディング推定」「目録警告（任意）」以外触らない。** webview2-bridge は「対応表 JSON（任意）」以外触らない
-6. **依存は増やさない。** slnmix は fast-xml-parser / iconv-lite / ignore の 3 つのまま。petari は実行時依存ゼロのまま
+5. **petari は「vbproj 対応 create」「新規ファイルのエンコーディング推定」「目録警告（任意）」「init の `--no-repomix`（§20）」以外触らない。** webview2-bridge は「対応表 JSON（任意）」以外触らない
+6. **依存は増やさない。** slnmix は fast-xml-parser / iconv-lite / ignore と petari(2026-10-11 追加。`slnmix init` が `petari init` を呼ぶため。petari 自身は実行時依存ゼロ)。petari は実行時依存ゼロのまま
 7. **後方互換。** オプションを付けなければ、既存ユーザーの出力は（§8.4 の物理パス化を除き）変わらない
 
 ---
@@ -733,6 +733,12 @@ End Class
 | 2026-10-10 | `--init-config` は実在するディレクトリ(src / app / lib / apps / packages → `kind: "src"`、tests / test / e2e / `__tests__` → `kind: "test"`)だけを書き、候補が無ければ推測せずエラー + 設定例。既存の設定は変えない | 原則 5(推測で補完しない)。`slnmix init` を作らない決定(2026-09-11)は「必須セットアップは petari init 一回」の意味で、任意機能の scaffold(`--init-docs` と同じ位置づけ)はそれと矛盾しない |
 | 2026-10-10 | generic 構成では `--root` / `--legacy-paths` / Designer 関連オプションは使えない(エラーまたは警告)。`.sln` を引数で明示したときは `kind` に関わらず従来どおり論理構成で出力する(警告) | ルートは設定の場所に固定する方が petari のルートと一致しやすい。明示入力を無視すると利用者の意図を黙って覆す |
 | 2026-10-10 | petari は無改修。generic 構成の `<file path>` は従来と同じルート相対の物理パスで、`newFile.encoding "auto"` と手本収集はそのまま効く。`.vbproj` 自動登録は対象ファイルが無いので何もしない | 変更が必要な根拠がない |
+| 2026-10-11 | 初回セットアップを `npx slnmix init` 1 コマンドにまとめる(v0.18.0、§20)。2026-09-11 の「`slnmix init` は作らない」と原則 1 を改める | 利用者の評価(2026-10-11)で「初回セットアップが複雑になってきた」が最大の手間に挙がった。v0.17.0 時点で `petari init`(4 問の対話)→ `--init-docs` → `.gitignore` の手作業、VB.NET 以外はさらに `--init-config` と、原則 1 の「一回のみ」から実質 3〜4 手順に増えていた。日常の入口が slnmix なので初回も同じ入口にする(置き場所は利用者が選択: slnmix に集約 / petari に集約 / 2 コマンドのまま) |
+| 2026-10-11 | slnmix の依存に petari を加え、`slnmix init` は同じ node で `petari init --yes --no-repomix --root <ルート>` を起動する(シェル非経由、出力は受け取って字下げ表示) | 規約文と `.petari/config.json` の雛形の正本は petari に置いたまま(二重管理しない)。petari は ESM・実行時依存ゼロなので import せず CLI を呼ぶ。petari 側に設定形式を持たせる案(petari に集約)は slnmix の設定の二重管理になるため不採用 |
+| 2026-10-11 | petari init に `--no-repomix`(手順 3 の repomix 連携を丸ごと省く。petari v0.11.0) | slnmix 利用者に `repomix.config.json` は要らない。`--yes` だけで呼ぶと作られてしまう |
+| 2026-10-11 | `slnmix init` はリポジトリ直下(最も近い `.git` の場所)でのみ動く。それ以外は何も書かずにエラー | petari のルートは最も近い `.git`(`findProjectRoot`)で、slnmix のルートと食い違うと changes.md の適用先がずれる(§14-3)。init で揃えておけば日常の `npx slnmix` / `npx petari` が同じ基準になる。`.git` が無ければ実行した場所をそのまま使う(petari も同じ) |
+| 2026-10-11 | 構成の判定は「既存の設定 > 直下の .sln / .vbproj > 1 段下のフォルダに .sln が 1 つだけ(target に書く)> generic(`--init-config` と同じ)」。1 段下に複数・2 段以上深い場合は推測せず、target の書き方を示して止まる | 1 段下の .sln を探すのは init だけの例外(パック対象は決めず、見つけたものを設定に書いて見える形にする)。ドット始まり・node_modules / bin / obj / packages は見ない。複数あるときに選ばないのは既存の自動検出(`targetResolver.ts`)と同じ方針 |
+| 2026-10-11 | `.gitignore` には生成物(`repomix-output.xml` / `repomix-output.prompt.md`)を末尾追記するだけ。既存の規則で除外済みなら足さない(判定は依存の ignore で行う)。既存部分は書き換えない | 既存の `.gitignore` が UTF-8 以外でもバイト列を変えないため。`.petari/` は petari init が足す |
 
 ## 18. フェーズ 6 — docs/ 連携とモード自動選択（slnmix、2026-09-15 追加、v0.14.0 で実装）
 
@@ -826,3 +832,28 @@ TypeScript 等の `.sln` / `.vbproj` の無いプロジェクトで、slnmix →
 - `tsconfig.json` / `package.json` からのソースディレクトリ推定(原則 5。候補名の実在だけを見る)
 - generic 構成での `<ui_summary>` 相当(React コンポーネントの要約など)。必要になったら別フェーズ
 - 手順文の「自動テスト」の観点表(仕様書・設計書の § 参照)は generic でも共通。表の「層」列(screen / api / host)は webview2-bridge 由来だが、文書のひな型が共通のため残している
+
+## 20. 初回セットアップの一本化(`slnmix init`、2026-10-11 追加、v0.18.0 で実装)
+
+### 20.1 狙い
+
+Claude Code / Codex をセキュリティ上の理由で導入できない企業でも回せる手法として外部に渡すにあたり、利用者の評価(2026-10-11)で「初回セットアップが複雑になってきた」が最大の手間に挙がった。v0.17.0 時点の初回は `npx petari init`(4 問の対話。うち `repomix.config.json` の作成は slnmix 利用者には不要)→ `npx slnmix --init-docs` → `.gitignore` に生成物 2 つを手で追記、VB.NET 以外はさらに `--init-config` を先に打つ必要があった。これを `npx slnmix init` 1 回にする。
+
+### 20.2 仕様
+
+- `slnmix init [<ディレクトリ>]`(`--root` でも可。既定はカレント)。位置引数の先頭が `init` のときだけサブコマンドとして扱う(`init` という名前のフォルダを入力にするときは `./init`)。実装は `src/initProject.ts`(deps 注入)
+- 実行場所が最も近い `.git` の場所と異なれば、何も書かずにエラー(リポジトリ直下での実行を案内)。`.git` が無ければ実行した場所を使う
+- 手順(どれも既存ファイルを変えない。何度実行しても同じ):
+  1. 構成: 既存の `slnmix.config.json` があればそのまま(壊れた JSON は上書きせずエラー、対象が決まらなければ書き方を示してエラー)。無ければ、直下の `.sln` / `.vbproj`(設定は作らない。複数ならエラー)> 1 段下のフォルダに `.sln` が 1 つだけ(`{ "target": "<フォルダ>/<名前>.sln" }` を書く。複数ならエラー + 候補と例)> generic(`initConfig` と同じ。候補が無ければエラー)
+  2. docs/ 連携(`initDocs` と同じ)
+  3. `.gitignore` に `repomix-output.xml` / `repomix-output.prompt.md` を末尾追記(除外済みなら足さない。既存の改行コードに合わせる)
+  4. 依存の petari を `require.resolve("petari/package.json")` で見つけ、`bin` を同じ node で `init --yes --no-repomix --root <ルート>` として起動。出力は空行を除いて字下げ表示。失敗時は終了コード 1 と手動のコマンドを表示(1〜3 は済んでいる)
+- 終わりに日常の 2 コマンド(`npx slnmix` / `npx petari`)とコミットすべきもの(`slnmix.config.json`・`docs/`・`protocol.md`)を表示
+- `--init-docs` / `--init-config` は単独でも従来どおり使える。`.sln` が見つからないエラーの案内は `npx slnmix init` に変更
+- petari v0.11.0: `petari init --no-repomix`(手順 3 を省く)。slnmix の `package.json` の依存は `"petari": "^0.11.0"`(petari の公開が先。petari は Node.js 20.19 以降が必要)
+
+### 20.3 未対応(意図的スコープ外)
+
+- 2 段以上深い `.sln` の探索(推測になるため。`target` を書いてもらう)
+- ハイブリッド構成の `extraRoots` の自動記入(web 側のディレクトリ名は構成ごとに違う。webview2-bridge の雛形は設定を同梱済み)
+- `procedure.md` の雛形生成(内蔵既定文で足りる。カスタマイズは `--print-procedure`)
