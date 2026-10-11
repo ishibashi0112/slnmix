@@ -17,6 +17,9 @@ importers:
       ignore:
         specifier: ^7.0.6
         version: 7.0.6
+      petari:
+        specifier: ^0.11.0
+        version: 0.11.0
     devDependencies:
       '@types/mocha':
         specifier: ^10.0.10
@@ -268,6 +271,11 @@ packages:
   path-scurry@1.11.1:
     resolution: {integrity: sha512-Xa4Nw17FS9ApQFJ9umLiJS4orGjm7ZzwUrwamcGQuHSzDyth9boKDaycYdDcZDuqYATXw4HFXgaqWTctW/v1HA==}
     engines: {node: '>=16 || 14 >=14.18'}
+
+  petari@0.11.0:
+    resolution: {integrity: sha512-jRgsDLqb51njzlSeRM4w2ULls9IDtGq3uF7iuDE4M9hM+L76CxayVYloOSUEOY2JaEaxagIkuUvncpVzcqy4vA==}
+    engines: {node: '>=20.19.0'}
+    hasBin: true
 
   picocolors@1.1.1:
     resolution: {integrity: sha512-xceH2snhtb5M9liqDsmEw56le376mTZkEX/jEb/RxNFyegNul7eNslCXP9FDj/Lcu0X8KEyMceP2ntpaHrDEVA==}
@@ -608,6 +616,8 @@ snapshots:
     dependencies:
       lru-cache: 10.4.3
       minipass: 7.1.3
+
+  petari@0.11.0: {}
 
   picocolors@1.1.1: {}
 

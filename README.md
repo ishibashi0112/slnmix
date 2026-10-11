@@ -81,6 +81,36 @@ Designer 自動生成コードからの要約(コントロール名: 型 — Tex
 npx slnmix MyApp.sln --include-designer-file FormMain.Designer.vb --include-designer-file "FormOrder*"
 ```
 
+## 初回セットアップ(`slnmix init`、v0.18.0〜)
+
+リポジトリの直下(`.git` のある場所)で一度だけ実行します。
+
+```console
+npx slnmix init
+```
+
+次の 4 つをまとめて行います。既存のファイルは変えないので、何度実行しても同じです
+(`protocol.md` だけは最新の規約文に更新します。petari の更新に追従したいときも
+これを打ち直せば足ります)。
+
+1. **構成の判定**: 直下に `.sln` / `.vbproj` があれば設定は作りません。直下に無く、
+   1 段下のフォルダ(例: `dotnet/`)に `.sln` が 1 つだけあれば `slnmix.config.json` の
+   `target` に書きます。どちらも無ければ VB.NET 以外のプロジェクトとして
+   `kind: "generic"` の設定を作ります(下記。`--init-config` と同じ)
+2. **docs/ 連携**: `docs/design/` `docs/spec/` `docs/README.md` と `docs` 設定(`--init-docs` と同じ)
+3. **.gitignore**: 生成物 `repomix-output.xml` / `repomix-output.prompt.md` を追記
+   (既存の規則で除外済みなら足しません。既存の行は書き換えず末尾に足します)
+4. **petari**: 依存として入る [petari](https://github.com/ishibashi0112/petari) の
+   `petari init --yes --no-repomix` を実行し、規約文 `protocol.md` と `.petari/` を作ります
+
+リポジトリ直下以外で実行するとエラーで止まります。petari はリポジトリ直下を基準に
+changes.md のパスを当てるため、slnmix のルートもそこに揃えるためです。
+`.sln` が 1 段下に複数あるときや、2 段以上深いときは、`slnmix.config.json` に
+`"target": "<フォルダ>/<名前>.sln"` を書いてから実行してください。
+petari の実行には Node.js 20.19 以降が必要です。
+
+`--init-docs` / `--init-config` は従来どおり単独でも使えます。
+
 ## 使い方
 
 ```console
@@ -118,9 +148,10 @@ npx slnmix Sub\Project.vbproj --stdout
                           作業手順のモード(既定: full。docs 連携時は文書の
                           状態から自動選択)
       --design <名前|file> design モードで対象の設計書を指定(なければ新規作成)
-      --init-docs         docs/ 連携の初回セットアップ(一回だけ)
-      --init-config       VB.NET 以外のプロジェクト向けに slnmix.config.json
-                          (kind: "generic")を作る(一回だけ。既にあれば変えない)
+      --init-docs         docs/ 連携だけを設定する(slnmix init に含まれる)
+      --init-config       VB.NET 以外のプロジェクト向けの slnmix.config.json
+                          (kind: "generic")だけを作る(既にあれば変えない。
+                          slnmix init に含まれる)
       --plan <file>       implement モードで承認済みの方針を <plan> として同梱
       --procedure-file <path>
                           作業手順文を明示指定(既定: 入力と同じ場所の
@@ -176,8 +207,8 @@ web と dotnet を分けた構成(例: webview2-bridge の雛形は `dotnet/MyAp
 WinForms + WebView2 + React([webview2-bridge](https://github.com/ishibashi0112/webview2-bridge))
 のように `.vbproj` に乗らない web 側・契約側のディレクトリがある場合、ルート直下に
 `slnmix.config.json` を置くと同じパックに入ります。**なくても動きます**
-(`slnmix init` はありません。`.sln` の無いプロジェクト向けの `--init-config` は
-下記「VB.NET 以外のプロジェクト」)。
+(`slnmix init` は `target` と `docs` までを書きます。`extraRoots` は手で足してください。
+`.sln` の無いプロジェクトは下記「VB.NET 以外のプロジェクト」)。
 
 ```jsonc
 {
@@ -241,12 +272,11 @@ types:
 埋めた規約文は届きません(下記「M365 Copilot Chat への渡し方」)。
 
 ```console
-npx petari init          # 規約文 protocol.md(まだなければ)
-npx slnmix --init-config # slnmix.config.json を作る(一回だけ)
+npx slnmix init          # 一回だけ。.sln / .vbproj が無ければ generic の設定を作る
 npx slnmix               # repomix-output.xml と repomix-output.prompt.md ができる
 ```
 
-`--init-config` は、実行した場所に実在するディレクトリだけを書きます
+`init`(と単独の `--init-config`)は、実行した場所に実在するディレクトリだけを書きます
 (`src` / `app` / `lib` / `apps` / `packages` → `kind: "src"`、
 `tests` / `test` / `e2e` / `__tests__` → `kind: "test"`)。候補が 1 つも無ければ
 推測で書かずに設定例を表示して終わります。既に設定ファイルがあれば変えません。
@@ -351,19 +381,19 @@ AI に changes.md 規約を守らせるための規約文を出力末尾に含�
 入力(`.sln` / `.vbproj`)と同じフォルダに `protocol.md` があれば、
 その内容を**一字一句そのまま** `<instruction>` ブロックとして出力末尾に
 連結します(本家 repomix の `instructionFilePath` 相当)。`protocol.md` は
-プロジェクト直下で `petari init` を実行すると生成されます。
+`npx slnmix init`(内部で `petari init`)で生成されます。
 規約文を付けたときは、出力の先頭にも末尾の規約へ誘導する短いリマインダを
 置きます。**ただし Copilot Chat にファイル添付で渡す場合、添付内の規約文は
 無視されます。** 規約文は本文用テキスト(`<出力名>.prompt.md`、上記)にも
 含まれるので、添付で渡すときはそちらを本文に貼ってください。
 
 ```console
-npx petari init   # protocol.md を生成(規約文の正本は petari が持つ)
+npx slnmix init   # protocol.md を生成(内部で petari init。規約文の正本は petari が持つ)
 npx slnmix        # 出力末尾に protocol.md が <instruction> として付く
 ```
 
 規約文は slnmix に同梱していないため、petari 側で規約が更新されても
-`petari init` で `protocol.md` を作り直すだけで追従できます。
+`npx slnmix init`(または `petari init`)で `protocol.md` を作り直すだけで追従できます。
 `protocol.md` がない場合は従来どおりの出力になります(その旨を 1 行表示)。
 別の場所・別名のファイルを使う場合は `--instruction-file <path>` で
 明示指定してください。
@@ -449,8 +479,9 @@ AI が changes.md で出して [petari](https://github.com/ishibashi0112/petari)
 ので、日常のコマンドは `npx slnmix` と `npx petari` の 2 つだけになります。
 
 ```console
-npx slnmix --init-docs    # 一回だけ: docs/design/ docs/spec/ docs/README.md を作り
+npx slnmix init           # 一回だけ: docs/design/ docs/spec/ docs/README.md を作り
                           #           slnmix.config.json に "docs" を追記する
+                          #           (docs だけなら npx slnmix --init-docs)
 npx slnmix                # 以後はこれだけ。モードとタスクは文書の状態から自動
 npx petari                # AI の changes.md(コードも文書も)を適用する
 ```

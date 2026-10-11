@@ -11,6 +11,7 @@
  * ファイル I/O と引数処理のみを担当する。
  */
 
+import { spawnSync } from "child_process";
 import * as fs from "fs";
 import * as path from "path";
 import { parseArgs } from "util";
@@ -26,6 +27,7 @@ import { buildDesignerFileMatcher } from "./designerFileFilter";
 import { decideMode, describeDocs, resolveDocs, type DocsResolution } from "./docs";
 import { initDocs } from "./initDocs";
 import { initConfig } from "./initConfig";
+import { initProject, type PetariInitOutcome } from "./initProject";
 import { resolveInstructionFile } from "./instructionFile";
 import {
 	assembleOutput,
@@ -53,13 +55,20 @@ import { parseVbproj } from "./vbprojParser";
 const USAGE = `slnmix — .sln / .vbproj の論理構成に基づく repomix 互換エクスポート
 
 使い方:
+  slnmix init [<ディレクトリ>]   初回セットアップ(一回だけ。リポジトリ直下で実行)
   slnmix [<solution.sln | project.vbproj | ディレクトリ>] [オプション]
+
+  slnmix init は構成の判定(.sln / .vbproj、1 段下の .sln、VB.NET 以外の generic)、
+  docs/ 連携、.gitignore への生成物の追記、petari init(protocol.md と .petari/)を
+  まとめて行います。既存のファイルは変えないので何度実行しても同じです
+  (protocol.md だけは最新の規約文に更新します)。init という名前のフォルダを
+  入力にするときは ./init と書いてください。
 
   入力を省略するとカレントディレクトリ(ディレクトリ指定ならその直下)の
   *.sln を自動検出します(なければ *.vbproj。複数ある場合は候補を表示)。
   その場所の slnmix.config.json に "target": "dotnet/App.sln" があればそれを使います。
   同じ設定が "kind": "generic" なら .sln / .vbproj を探さず、extraRoots に宣言した
-  ディレクトリだけでパックします(VB.NET 以外のプロジェクト。--init-config で作成)。
+  ディレクトリだけでパックします(VB.NET 以外のプロジェクト。init で作成)。
 
   ルート(<file path> の基準。設定ファイル・protocol.md・docs/・出力先もここ)は
   --root > 入力のディレクトリから上に向かって最初に見つかる slnmix.config.json の
@@ -107,12 +116,13 @@ const USAGE = `slnmix — .sln / .vbproj の論理構成に基づく repomix 互
       --design <名前|file>
                         design モードで対象の設計書を指定(既存なら継続、なければ
                         docs/design/<名前>.md を新規作成)
-      --init-docs       docs/ 連携の初回セットアップ(docs/design/、docs/spec/、
-                        docs/README.md を作り slnmix.config.json に docs 設定を追記)
-      --init-config     VB.NET 以外のプロジェクト向けに slnmix.config.json
-                        (kind: "generic")を作る(カレント、または --root の場所。
+      --init-docs       docs/ 連携だけを設定する(docs/design/、docs/spec/、
+                        docs/README.md を作り slnmix.config.json に docs 設定を追記。
+                        init に含まれる)
+      --init-config     VB.NET 以外のプロジェクト向けの slnmix.config.json
+                        (kind: "generic")だけを作る(カレント、または --root の場所。
                         実在する src / tests 等のディレクトリだけを extraRoots に
-                        書く。既にあれば変えない)
+                        書く。既にあれば変えない。init に含まれる)
       --plan <file>     implement モードで承認済みの方針を <plan> として同梱する
       --procedure-file <path>
                         作業手順文を明示指定(既定: ルートの procedure.md を
@@ -133,6 +143,7 @@ const USAGE = `slnmix — .sln / .vbproj の論理構成に基づく repomix 互
   -h, --help            このヘルプ
 
 例:
+  npx slnmix init                   (初回だけ。リポジトリ直下で)
   npx slnmix                        (カレントの .sln を自動検出)
   npx slnmix C:\\path\\to\\Project    (指定フォルダ内を自動検出)
   npx slnmix MyApp.sln -o for-ai.xml --include-designer
@@ -140,8 +151,7 @@ const USAGE = `slnmix — .sln / .vbproj の論理構成に基づく repomix 互
   npx slnmix --task task.md --mode plan            (方針だけ先に出させる)
   npx slnmix --task task.md --mode implement --plan plan.md
   npx slnmix --print-procedure > procedure.md      (手順文をカスタマイズ)
-  npx slnmix --init-config && npx slnmix           (TypeScript 等のプロジェクトで使う)
-  npx slnmix --init-docs                           (docs/ 連携を始める。一回だけ)
+  npx slnmix init && npx slnmix                   (VB.NET でも TypeScript 等でも同じ)
   npx slnmix                                       (以後は文書の状態からモード自動)
 
 M365 Copilot Chat への渡し方(推奨):
@@ -209,6 +219,68 @@ const FS_DEPS: FsDeps = {
 		return results;
 	},
 };
+
+function listDirectoryNames(absolutePath: string): string[] | undefined {
+	try {
+		return fs
+			.readdirSync(absolutePath, { withFileTypes: true })
+			.filter((entry) => entry.isDirectory())
+			.map((entry) => entry.name);
+	} catch {
+		return undefined;
+	}
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * 依存として入っている petari の init を実行する(slnmix init の手順 4)。
+ * petari は ESM のため import せず、同じ node で CLI を起動する(シェル非経由)。
+ * 出力は受け取って手順 4 の下に字下げして出す(--yes なので入力は求めない)
+ */
+function runPetariInit(rootDir: string): PetariInitOutcome {
+	let packageJsonPath: string;
+	try {
+		packageJsonPath = require.resolve("petari/package.json");
+	} catch {
+		return {
+			ok: false,
+			message: "petari が見つかりません(slnmix の依存として入るはずです。npx slnmix@latest init を試してください)",
+			output: "",
+		};
+	}
+	let bin: string | undefined;
+	try {
+		const parsed: unknown = JSON.parse(fs.readFileSync(packageJsonPath, "utf8"));
+		const binField = isRecord(parsed) ? parsed["bin"] : undefined;
+		const candidate = isRecord(binField) ? binField["petari"] : binField;
+		bin = typeof candidate === "string" ? candidate : undefined;
+	} catch {
+		bin = undefined;
+	}
+	if (bin === undefined) {
+		return { ok: false, message: `petari の実行ファイルが分かりません: ${packageJsonPath}`, output: "" };
+	}
+	const result = spawnSync(
+		process.execPath,
+		[path.resolve(path.dirname(packageJsonPath), bin), "init", "--yes", "--no-repomix", "--root", rootDir],
+		{ encoding: "utf8" },
+	);
+	const output = `${result.stdout ?? ""}${result.stderr ?? ""}`;
+	if (result.error !== undefined) {
+		return { ok: false, message: result.error.message, output };
+	}
+	if (result.status !== 0) {
+		return {
+			ok: false,
+			message: `終了コード ${result.status ?? `(シグナル ${result.signal ?? "不明"})`}`,
+			output,
+		};
+	}
+	return { ok: true, output };
+}
 
 function isDirectoryPath(absolutePath: string): boolean {
 	try {
@@ -374,6 +446,28 @@ function main(): number {
 	if (explicitMode !== "implement" && values.plan !== undefined) {
 		console.error("--plan は --mode implement でのみ使えます。");
 		return 1;
+	}
+
+	// 初回セットアップ(構成・docs/・.gitignore・petari を 1 コマンドで)
+	if (positionals[0] === "init") {
+		if (positionals.length > 2) {
+			console.error("slnmix init に渡せるのはディレクトリ 1 つだけです。");
+			return 1;
+		}
+		const initRoot = path.resolve(process.cwd(), values.root ?? positionals[1] ?? ".");
+		return initProject(initRoot, {
+			isDirectory: isDirectoryPath,
+			isFile: isFilePath,
+			exists: (p) => fs.existsSync(p),
+			listFileNames: FS_DEPS.listFileNames,
+			listDirectoryNames,
+			readTextFile: readSourceTextFile,
+			writeTextFile: (p, content) => fs.writeFileSync(p, content, "utf8"),
+			appendTextFile: (p, content) => fs.appendFileSync(p, content, "utf8"),
+			makeDirectory: (p) => fs.mkdirSync(p, { recursive: true }),
+			runPetariInit,
+			log: (line) => console.error(line),
+		}).exitCode;
 	}
 
 	// VB.NET 以外のプロジェクト向けの設定ファイルを作る(入力の解決より前。.sln は無い前提)

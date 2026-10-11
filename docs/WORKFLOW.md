@@ -1,15 +1,15 @@
 # slnmix + petari + M365 Copilot Chat 運用ガイド
 
 「次に何を打てばいいか」を迷ったときに開くページです。slnmix v0.14 以降
-(docs/ 連携あり) を前提にしています。仕組みの背景は
+(docs/ 連携あり) を前提にしています (初回セットアップの `npx slnmix init` は v0.18.0 以降)。仕組みの背景は
 [HANDOFF-slnmix-petari-2026-09.md](HANDOFF-slnmix-petari-2026-09.md) §18 に
 ありますが、日常ではこのページだけで足ります。
 
 ## 0. 30 秒版
 
 ```text
-初回だけ   npx petari init            (規約文 protocol.md と .petari/ を作る)
-           npx slnmix --init-docs     (docs/ と slnmix.config.json の docs 設定を作る)
+初回だけ   npx slnmix init            (リポジトリ直下で。構成の判定・docs/・.gitignore・
+                                       規約文 protocol.md と .petari/ をまとめて作る)
 
 毎回       npx slnmix                 → repomix-output.xml と repomix-output.prompt.md ができる
            Copilot Chat: .xml を添付、.prompt.md の中身を本文に貼って送信
@@ -27,8 +27,8 @@
 web と dotnet を分けたアプリ (webview2-bridge の雛形。`.sln` は `dotnet/` の下) でも同じです。
 雛形に同梱の `slnmix.config.json` (`target` と `extraRoots`) がアプリのルートにあるので、
 そこで `npx slnmix` と打てばアプリのルート基準のパックになり、petari のルートと一致します。
-VB.NET 以外のプロジェクト (TypeScript 等。`.sln` が無い) は初回に `npx slnmix --init-config`
-を 1 回打てば、あとは同じです (3-7)。
+VB.NET 以外のプロジェクト (TypeScript 等。`.sln` が無い) も、初回の `npx slnmix init` が
+generic 構成の設定を作るので、あとは同じです (3-7)。
 
 ## 1. 登場するもの
 
@@ -40,7 +40,7 @@ VB.NET 以外のプロジェクト (TypeScript 等。`.sln` が無い) は初回
 | 仕様書 | `docs/spec/<名前>.md` | 実装済みの振る舞いの正本 |
 | 引継ぎ書 | `docs/HANDOFF.md` | チャット間の申し送りだけ (1 ファイル固定。履歴は git) |
 | changes.md | Downloads | AI の回答。コードも文書も同じ形式で、petari が適用する |
-| protocol.md | プロジェクトルート | petari の出力規約 (`petari init` が生成) |
+| protocol.md | プロジェクトルート | petari の出力規約 (`npx slnmix init` が petari を呼んで生成) |
 | 自動テスト | `e2e/` (screen / api / host) と `*.spec.ts` / `*.test.ts` | webview2-bridge の雛形が作る。あるプロジェクトでは AI がコードと同じ changes.md でテストも返す |
 | 失敗レポート | `test-results/report.md` | `pnpm test:all` が失敗したときの Markdown。クリップボードにも入るのでそのままチャットに貼る |
 
@@ -109,7 +109,7 @@ draft の設計書が 2 つ以上あるときは `--design <名前>` で対象�
 
 ### 3-3. 既存プロジェクトを乗せ替える (設計書と引継ぎ書を手動添付している)
 
-1. `npx slnmix --init-docs` (一回だけ)
+1. `npx slnmix init` (一回だけ。リポジトリ直下で)
 2. 設計書を `docs/design/<名前>.md` にコピーし、**1 行目**に状態行を足す。実装中なら
    ready。後回しの件数は未回答の確認事項を数える (分からなければ 0 で可)
 
@@ -124,15 +124,15 @@ draft の設計書が 2 つ以上あるときは `--design <名前>` で対象�
 5. 仕様書がないことは slnmix が AI に伝えるので、最初の回答で仕様書の初版が
    changes.md で返る。`npx petari` で保存
 
-docs/ と slnmix.config.json は git にコミットしてください。
-repomix-output.xml と .prompt.md は生成物なので .gitignore へ。
+docs/ と slnmix.config.json、protocol.md は git にコミットしてください。
+生成物の repomix-output.xml と .prompt.md は init が .gitignore に追記済みです。
 
 ### 3-4. 完成済みプロジェクトに仕様追加する (文書が何もない)
 
 設計書も仕様書もない既存プロジェクトを改修するときは、3-1 と同じ操作で始められます。
 違いは AI が最初に作る文書です。
 
-1. `npx slnmix --init-docs` (一回だけ)
+1. `npx slnmix init` (一回だけ。リポジトリ直下で)
 2. `npx slnmix` → 「モード: design (自動: 設計書がないため新規作成)」
 3. 新しいチャットに添付 + 貼付し、「この画面にこういう仕様を追加したい」と依頼する
 4. AI はまず**改修対象の画面・機能に限った現状の仕様書** (as-is) をコードから起こし、
@@ -184,15 +184,15 @@ git で手動で戻したなど、本当に当て直したいときだけ `--for
 作れず、添付末尾に埋めた規約文は Copilot に無視されるため、AI の返答が changes.md の
 規約から外れて petari のパースで落ちます。slnmix を使えばその経路を塞げます。
 
-1. `npx petari init` (規約文 protocol.md。まだなければ)
-2. `npx slnmix --init-config` (一回だけ)。実在する `src` / `tests` 等だけを
-   `slnmix.config.json` の `extraRoots` に書き、`"kind": "generic"` を付ける。
-   ソースのディレクトリ名が候補 (src / app / lib / apps / packages) に無いときは
-   設定例が表示されるので手で書く
-3. 以降は 0 章と同じ。`npx slnmix` が「対象: generic 構成」と表示し、`extraRoots` の
+1. `npx slnmix init` (一回だけ。リポジトリ直下で)。`.sln` / `.vbproj` が無いので、
+   実在する `src` / `tests` 等だけを `slnmix.config.json` の `extraRoots` に書き、
+   `"kind": "generic"` を付ける。ソースのディレクトリ名が候補
+   (src / app / lib / apps / packages) に無いときは設定例が表示されるので手で書き、
+   もう一度 `npx slnmix init` を打つ
+2. 以降は 0 章と同じ。`npx slnmix` が「対象: generic 構成」と表示し、`extraRoots` の
    ディレクトリだけでパックと `.prompt.md` を作る。手順文は VB 固有の項目を外した
    文面 (先頭行に `layout: generic`) になる
-4. docs/ 連携 (`--init-docs`)・継続判定・自動テストの節も同じように使える
+3. docs/ 連携・継続判定・自動テストの節も同じように使える (init が docs/ も作る)
 
 対象ディレクトリを増やすときは `extraRoots` に `{ "path": "...", "kind": "src" }` を
 追記します。TS / JS 以外の言語は `include` を明示してください (`kind: "src"` の既定は
@@ -206,13 +206,14 @@ npx slnmix --task "依頼文"         依頼文を自分で指定する (既定�
 npx slnmix --design 画面名         その設計書を新規作成 / 継続する design モード
 npx slnmix --mode plan             方針だけ先に出させる
 npx slnmix --print-prompt | clip   本文用テキストを直接クリップボードへ (Windows。Mac は pbcopy)
-npx slnmix --init-docs             docs/ 連携の初回セットアップ (冪等)
-npx slnmix --init-config           VB.NET 以外のプロジェクト向け slnmix.config.json を作る (冪等)
+npx slnmix init                    初回セットアップ (リポジトリ直下で。冪等。protocol.md の更新にも)
+npx slnmix --init-docs             docs/ 連携だけを設定する (init に含まれる)
+npx slnmix --init-config           VB.NET 以外向けの slnmix.config.json だけを作る (init に含まれる)
 
 npx petari                         Downloads の changes.md を適用
 npx petari undo                    直前の適用を巻き戻す
 npx petari show                    直前の適用の差分を表示
-npx petari init                    規約文 protocol.md と .petari/ を作る (初回のみ)
+npx petari init                    規約文 protocol.md と .petari/ を作る (slnmix init が呼ぶので通常は不要)
 ```
 
 ## 5. よくある迷い
@@ -226,10 +227,13 @@ npx petari init                    規約文 protocol.md と .petari/ を作る 
 - **引継ぎ書が古い** → AI が出した changes.md を petari で当てていない。Downloads を確認
 - **本文用テキストが 120K 文字を超えた** (警告が出る) → 設計書を分割するか、
   design モード以外では設計書は本文に入らないので、設計を確定させて実装に進む
-- **`--mode design` でエラー** → docs/ 連携が要る。`npx slnmix --init-docs`
-- **「.sln / .vbproj が見つかりません」** → VB.NET 以外のプロジェクトなら
-  `npx slnmix --init-config` (3-7)。VB.NET なら `.sln` のある場所で実行するか
+- **`--mode design` でエラー** → docs/ 連携が要る。`npx slnmix init`
+- **「.sln / .vbproj が見つかりません」** → 初めてなら `npx slnmix init` (VB.NET 以外も
+  これで generic 構成になる。3-7)。VB.NET なら `.sln` のある場所で実行するか
   `slnmix.config.json` の `target` を書く
+- **`npx slnmix init` が「リポジトリの直下ではありません」で止まる** → `.git` のある
+  フォルダへ移って打ち直す。`.sln` が 1 段下にあれば init が `target` に書く。2 段以上
+  深いときは `slnmix.config.json` に `"target": "<パス>/<名前>.sln"` を書いてから打つ
 - **petari のパースが続けて失敗する (TS プロジェクトで repomix を使っている)** →
   規約文が本文に届いていない。slnmix に切り替えて `.prompt.md` を貼る (3-7)。
   当座は `npx petari protocol` の出力を本文に貼れば規約文だけは届く
