@@ -11,8 +11,9 @@
 初回だけ   npx slnmix init            (リポジトリ直下で。構成の判定・docs/・.gitignore・
                                        規約文 protocol.md と .petari/ をまとめて作る)
 
-毎回       npx slnmix                 → repomix-output.xml と repomix-output.prompt.md ができる
-           Copilot Chat: .xml を添付、.prompt.md の中身を本文に貼って送信
+毎回       npx slnmix                 → 貼るものがクリップボードに入る
+           Copilot Chat: 本文に貼って送信 (パックが大きいときだけ .xml も添付。
+                         どちらかは実行末尾の 1 行に出る)
            AI の changes.md をダウンロード
            npx petari                 → Downloads の changes.md を自動検出して適用
            ビルド → pnpm test:all      → 失敗ならクリップボードのレポートをチャットに貼る
@@ -34,8 +35,8 @@ generic 構成の設定を作るので、あとは同じです (3-7)。
 
 | もの | 場所 | 役割 |
 |---|---|---|
-| パック | `repomix-output.xml` | コード全文 + docs/ の全文書。Copilot Chat に**添付**する |
-| 本文用テキスト | `repomix-output.prompt.md` | 依頼内容・今回編集する文書・ひな型・作業手順・出力規約。中身を本文に**貼る** |
+| パック | `repomix-output.xml` | コード全文 + docs/ の全文書。約 120K 文字以内なら丸ごと本文に**貼る** (クリップボードに入っている)。超えるときは Copilot Chat に**添付**する |
+| 本文用テキスト | `repomix-output.prompt.md` | 依頼内容・今回編集する文書・ひな型・作業手順・出力規約。パックを添付するときに本文に**貼る** (このときはこちらがクリップボードに入っている) |
 | 設計書 | `docs/design/<名前>.md` | 開発の進め方と判断の根拠。1 行目の状態行で draft / ready を管理 |
 | 仕様書 | `docs/spec/<名前>.md` | 実装済みの振る舞いの正本 |
 | 引継ぎ書 | `docs/HANDOFF.md` | チャット間の申し送りだけ (1 ファイル固定。履歴は git) |
@@ -47,6 +48,9 @@ generic 構成の設定を作るので、あとは同じです (3-7)。
 添付と貼付を分ける理由: Copilot Chat は添付ファイル内の指示を「埋め込み指示」として
 無視します。指示が効くのは本文だけなので、AI に従わせたいものはすべて
 `.prompt.md` 側に入っています。パックは検索して参照される側です。
+パックが小さいときは本文に丸ごと貼れば全文がコンテキストに入り、埋め込みの指示も
+効くので、slnmix はパック全体をクリップボードに入れます (添付は不要)。
+以下の手順の「添付 + 貼付」は、パックが小さいときは「貼付だけ」と読み替えてください。
 
 ## 2. 全体の流れ
 
@@ -76,7 +80,7 @@ flowchart TD
 ### 3-1. 新しい画面・機能を作り始める (設計書がない)
 
 1. `npx slnmix` → 「モード: design (自動: 設計書がないため新規作成)」と出る
-2. 新しいチャットに .xml を添付、.prompt.md を貼り、続けて「この画面を作りたい。
+2. 新しいチャットにクリップボードの中身を貼り (大きいときは .xml も添付)、続けて「この画面を作りたい。
    資料は添付のとおり」と依頼と資料 (テーブル定義、既存画面のパック等) を渡す
 3. AI が設計書の初版 (changes.md の create) と確認事項 (必須 / 後回し) を返す
 4. `npx petari` で docs/design/ に保存される
@@ -205,7 +209,7 @@ npx slnmix                         パックと本文用テキストを作る (�
 npx slnmix --task "依頼文"         依頼文を自分で指定する (既定文の代わり)
 npx slnmix --design 画面名         その設計書を新規作成 / 継続する design モード
 npx slnmix --mode plan             方針だけ先に出させる
-npx slnmix --print-prompt | clip   本文用テキストを直接クリップボードへ (Windows。Mac は pbcopy)
+npx slnmix --no-clip               クリップボードに入れない (既定は貼るものを自動でコピー)
 npx slnmix init                    初回セットアップ (リポジトリ直下で。冪等。protocol.md の更新にも)
 npx slnmix --init-docs             docs/ 連携だけを設定する (init に含まれる)
 npx slnmix --init-config           VB.NET 以外向けの slnmix.config.json だけを作る (init に含まれる)
@@ -223,7 +227,9 @@ npx petari init                    規約文 protocol.md と .petari/ を作る 
 - **設計書に状態行がない** → 警告が出て ready 扱いになる。1 行目に足す
 - **draft の設計書が複数ある** → `--design <名前>` で対象を指定する
 - **AI が継続判定を書かない** → 「継続判定は?」と聞く。手順文は本文に貼った
-  .prompt.md 側にあるので、貼り忘れると出ない
+  クリップボードの中身 (.prompt.md またはパック全体) にあるので、貼り忘れると出ない
+- **クリップボードに入っていない** → 実行末尾の警告を見る。PowerShell が制限された
+  環境などでは自動コピーできないので、従来どおり .prompt.md を開いて貼る
 - **引継ぎ書が古い** → AI が出した changes.md を petari で当てていない。Downloads を確認
 - **本文用テキストが 120K 文字を超えた** (警告が出る) → 設計書を分割するか、
   design モード以外では設計書は本文に入らないので、設計を確定させて実装に進む

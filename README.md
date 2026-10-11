@@ -158,6 +158,8 @@ npx slnmix Sub\Project.vbproj --stdout
                           procedure.md を自動検出。なければ内蔵既定文)
       --no-procedure      <procedure> を出さない(従来出力)
       --print-procedure   内蔵の作業手順文を標準出力に書いて終了
+      --no-clip           貼るもの(パック全体か本文用テキスト)をクリップボードに
+                          入れない(下記「クリップボードへの自動コピー」)
   -v, --version           バージョン表示
   -h, --help              ヘルプ
 ```
@@ -358,15 +360,29 @@ slnmix はそのための本文用テキストを、パックの隣に `<出力�
 
 ```console
 npx slnmix --task task.md                   # repomix-output.xml と repomix-output.prompt.md ができる
-                                            # → Copilot Chat: .xml を添付、.prompt.md の中身を本文に貼る
-npx slnmix --task task.md --print-prompt | clip   # 本文用テキストを直接クリップボードへ(Windows)
+                                            # → 貼るものはクリップボードに入っている
 ```
 
 `.prompt.md` の中身は、パック末尾に埋め込む `<task>` / `<plan>` / `<procedure>` /
 `<instruction>` と一字一句同じです(正本は 1 つ)。先頭に「添付とこの本文の関係」を
-述べる短い段落が付きます。パックが 120K 文字以内なら本文に丸ごと貼っても構いません
-(全文がコンテキストに入り、埋め込みの指示も効きます)。実行末尾に、パックが
-貼付上限の目安を超えているかどうかを 1 行表示します。
+述べる短い段落が付きます。
+
+### クリップボードへの自動コピー(v0.19.0〜)
+
+`npx slnmix` は実行の最後に、Copilot Chat に貼るものをクリップボードへ入れます。
+`.prompt.md` を開いてコピーする手間がなくなります。
+
+| パックの大きさ | クリップボードに入るもの | Copilot Chat でやること |
+|---|---|---|
+| 約 120K 文字以内 | パック全体(埋め込みの手順文・規約文を含む) | 本文に貼って送信。**添付は不要** |
+| 約 120K 文字を超える | 本文用テキスト(`.prompt.md` と同じ) | `repomix-output.xml` を添付し、本文に貼って送信 |
+
+どちらになったかは実行末尾の 1 行に出ます。小さいパックを本文に貼ると全文が
+コンテキストに入り、埋め込みの指示も効くので、添付より確実です。
+Windows は PowerShell の `Set-Clipboard`、macOS は `pbcopy`、Linux は `xclip`
+(入っていれば)を使います。コピーできなかったときは警告を出し、従来の案内
+(`.prompt.md` を開いて貼る)に戻ります。`--no-clip` で無効化、`--stdout` のときは
+コピーしません。
 
 添付経路では空行・行末空白が読み取りで失われるため、AI が出す SEARCH ブロックから
 空行が抜けることがあります。適用側の [petari](https://github.com/ishibashi0112/petari)

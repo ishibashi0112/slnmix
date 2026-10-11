@@ -37,6 +37,11 @@ workbench は 2026-09 時点で凍結(新機能は追わない)。
   リポジトリ直下でのみ動き、構成の判定(既存の設定 > 直下の .sln / .vbproj > 1 段下の
   .sln 1 つ → target > generic)・docs/・.gitignore への生成物の追記・依存の petari の
   `init --yes --no-repomix` 起動(`cli.ts` の `runPetariInit`)をまとめて行う。冪等
+- `src/handoff.ts` / `src/clipboard.ts` — Copilot Chat への受け渡し(設計書 §21、v0.19.0)。
+  実行の最後に、パックが貼付上限の目安(`PASTE_LIMIT_CHARS`)以内ならパック全体を、
+  超えるなら本文用テキストをクリップボードへ入れる(`--no-clip` で無効)。
+  クリップボードは OS コマンド(PowerShell Set-Clipboard / pbcopy / xclip)で、
+  自動テストなし(petari の infra/clipboard.ts と同じ方式)
 - `src/initConfig.ts` — `--init-config`(generic 構成の `slnmix.config.json` を
   実在するディレクトリだけで作る冪等な scaffold。候補が無ければ推測せずエラー)
 - `src/designerFileFilter.ts` — `--include-designer-file` のパターン一致

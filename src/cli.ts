@@ -23,10 +23,12 @@ import {
 	renderBuiltinProcedure,
 } from "./assets/procedure";
 import { describeAutoTests, detectAutoTests } from "./autoTests";
+import { writeClipboard } from "./clipboard";
 import { buildDesignerFileMatcher } from "./designerFileFilter";
 import { decideMode, describeDocs, resolveDocs, type DocsResolution } from "./docs";
 import { initDocs } from "./initDocs";
 import { initConfig } from "./initConfig";
+import { planHandoff } from "./handoff";
 import { initProject, type PetariInitOutcome } from "./initProject";
 import { resolveInstructionFile } from "./instructionFile";
 import {
@@ -137,8 +139,10 @@ const USAGE = `slnmix — .sln / .vbproj の論理構成に基づく repomix 互
                         <instruction>)の出力先(既定: パックと同じ場所の
                         <出力名>.prompt.md。--stdout のときは指定時のみ書く)
       --no-prompt       本文用の指示テキストを書かない
-      --print-prompt    本文用の指示テキストを標準出力に書いて終了(パックは作らない。
-                        クリップボードへ: slnmix --print-prompt | clip)
+      --print-prompt    本文用の指示テキストを標準出力に書いて終了(パックは作らない)
+      --no-clip         Copilot Chat に貼るものをクリップボードに入れない(既定では
+                        パックが貼付上限の目安以内ならパック全体を、超えるなら
+                        本文用テキストを入れる)
   -v, --version         バージョン表示
   -h, --help            このヘルプ
 
@@ -154,11 +158,13 @@ const USAGE = `slnmix — .sln / .vbproj の論理構成に基づく repomix 互
   npx slnmix init && npx slnmix                   (VB.NET でも TypeScript 等でも同じ)
   npx slnmix                                       (以後は文書の状態からモード自動)
 
-M365 Copilot Chat への渡し方(推奨):
-  パック(repomix-output.xml)を添付し、<出力名>.prompt.md の内容を本文に貼る。
-  添付ファイル内の指示は Copilot が「埋め込み指示」として無視するため、
-  手順文・規約文は本文側でないと効かない。パックが約 120K 文字以内なら
-  本文に丸ごと貼ってもよい(全文がコンテキストに入り、埋め込みの指示も効く)`;
+M365 Copilot Chat への渡し方:
+  実行後、貼るものがクリップボードに入っています(--no-clip で無効)。
+  パックが約 120K 文字以内ならパック全体が入るので、本文に貼って送信するだけ
+  (全文がコンテキストに入り、埋め込みの手順文・規約文も効く。添付は不要)。
+  超えるときは本文用テキスト(<出力名>.prompt.md と同じ)が入るので、パック
+  (repomix-output.xml)を添付し、本文に貼って送信する。添付ファイル内の指示は
+  Copilot が「埋め込み指示」として無視するため、手順文・規約文は本文側で渡す`;
 
 /**
  * M365 Copilot Chat の入力欄に貼れる上限の目安(文字)。超えると送信ボタンが
@@ -402,6 +408,7 @@ function main(): number {
 			"prompt-output": { type: "string" },
 			"no-prompt": { type: "boolean", default: false },
 			"print-prompt": { type: "boolean", default: false },
+			"no-clip": { type: "boolean", default: false },
 			version: { type: "boolean", short: "v", default: false },
 			help: { type: "boolean", short: "h", default: false },
 		},
@@ -874,21 +881,37 @@ function main(): number {
 		)}K 文字(スキップ ${output.skipped.length} 件${maskNote}${uiSummaryNote}${extraNote}${contractNote})`,
 	);
 
-	// Copilot Chat への渡し方の案内(貼付上限の実測値に基づく)
-	const packChars = content.length;
-	if (packChars > PASTE_LIMIT_CHARS) {
+	// Copilot Chat への受け渡し。貼るものをクリップボードに入れておく(設計書 §21)
+	const handoff = planHandoff(content, promptText, PASTE_LIMIT_CHARS);
+	const clipped =
+		!values.stdout && !values["no-clip"] && handoff.kind !== "none"
+			? writeClipboard(handoff.text)
+			: undefined;
+	if (clipped !== undefined && !clipped.ok) {
+		console.error(`[warning] クリップボードにコピーできませんでした(${clipped.message})`);
+	}
+	const limitNote = `貼付上限の目安(約 ${PASTE_LIMIT_CHARS / 1000}K 文字)`;
+	if (clipped?.ok === true && handoff.kind === "paste-pack") {
 		console.error(
-			`パックは貼付上限の目安(約 ${PASTE_LIMIT_CHARS / 1000}K 文字)を超えています → Copilot Chat には添付で渡してください`,
+			`パックが${limitNote}以内なので、パック全体をクリップボードにコピーしました → Copilot Chat の本文に貼って送信してください(添付は不要)`,
+		);
+	} else if (clipped?.ok === true && handoff.kind === "paste-prompt") {
+		console.error(
+			`パックは${limitNote}を超えています → ${path.basename(outputPath)} を添付し、クリップボードにコピーした本文用テキストを本文に貼って送信してください`,
 		);
 	} else {
-		console.error(
-			`パックは貼付上限の目安(約 ${PASTE_LIMIT_CHARS / 1000}K 文字)以内です → 本文に貼れば全文がコンテキストに入ります`,
-		);
-	}
-	if (promptPath !== undefined) {
-		console.error(
-			`添付で渡す場合は ${path.basename(promptPath)} の内容を本文に貼ってください(添付内の指示は Copilot が無視します)`,
-		);
+		// クリップボードを使わない(--no-clip / --stdout / 失敗)ときは従来の案内
+		const packChars = content.length;
+		if (packChars > PASTE_LIMIT_CHARS) {
+			console.error(`パックは${limitNote}を超えています → Copilot Chat には添付で渡してください`);
+		} else {
+			console.error(`パックは${limitNote}以内です → 本文に貼れば全文がコンテキストに入ります`);
+		}
+		if (promptPath !== undefined) {
+			console.error(
+				`添付で渡す場合は ${path.basename(promptPath)} の内容を本文に貼ってください(添付内の指示は Copilot が無視します)`,
+			);
+		}
 	}
 	if (promptText !== undefined && promptText.length > PASTE_LIMIT_CHARS) {
 		console.error(
