@@ -500,6 +500,7 @@ npx slnmix init           # 一回だけ: docs/design/ docs/spec/ docs/README.md
                           #           (docs だけなら npx slnmix --init-docs)
 npx slnmix                # 以後はこれだけ。モードとタスクは文書の状態から自動
 npx petari                # AI の changes.md(コードも文書も)を適用する
+                          # (npx petari watch を起動しておくと、届くたびに自動で適用。petari v0.12.0〜)
 ```
 
 | 文書 | 場所 | 役割 | 更新のタイミング |

@@ -11,11 +11,13 @@
 初回だけ   npx slnmix init            (リポジトリ直下で。構成の判定・docs/・.gitignore・
                                        規約文 protocol.md と .petari/ をまとめて作る)
 
+作業の始めに npx petari watch         (別の端末で起動したままにする。Ctrl+C で終了)
+
 毎回       npx slnmix                 → 貼るものがクリップボードに入る
            Copilot Chat: 本文に貼って送信 (パックが大きいときだけ .xml も添付。
                          どちらかは実行末尾の 1 行に出る)
-           AI の changes.md をダウンロード
-           npx petari                 → Downloads の changes.md を自動検出して適用
+           AI の changes.md をダウンロード → watch が自動で適用
+                                       (watch を使わないときは npx petari)
            ビルド → pnpm test:all      → 失敗ならクリップボードのレポートをチャットに貼る
            手動確認は引継ぎ書の手動項目だけ → 「OK」と AI に伝える
 ```
@@ -25,6 +27,9 @@
 
 設計から始めるか、実装の続きか、引継ぎ書を書くかは slnmix と AI が決めます。
 あなたが打つコマンドは `npx slnmix` と `npx petari` (テストがあれば `pnpm test:all`) だけです。
+`npx petari watch` を起動しておけば、毎回の `npx petari` も要りません (petari v0.12.0〜)。
+watch はブラウザのダウンロード先とコードが同じ PC にあるときに使えます。リモート
+デスクトップ越しに changes.md を受け渡す運用では、従来どおり `npx petari` / `npx petari --clip` です。
 web と dotnet を分けたアプリ (webview2-bridge の雛形。`.sln` は `dotnet/` の下) でも同じです。
 雛形に同梱の `slnmix.config.json` (`target` と `extraRoots`) がアプリのルートにあるので、
 そこで `npx slnmix` と打てばアプリのルート基準のパックになり、petari のルートと一致します。
@@ -171,7 +176,8 @@ docs/ と slnmix.config.json、protocol.md は git にコミットしてくだ�
 ### 3-6. petari が失敗したとき
 
 失敗レポートは既定でクリップボードにコピーされます。そのままチャットに貼れば AI が
-修正版の changes.md を返します。2 回続けて失敗したら、AI が見ているパックと手元の
+修正版の changes.md を返します。watch はその修正版 (`changes (1).md` などの連番付きで
+保存されます) を自動で当てます。失敗した changes.md は当て直しません。2 回続けて失敗したら、AI が見ているパックと手元の
 コードがずれています。`npx slnmix` でパックを作り直し、新しいチャットで始めてください
 (引継ぎ推奨が出ます)。
 
@@ -214,6 +220,7 @@ npx slnmix init                    初回セットアップ (リポジトリ直�
 npx slnmix --init-docs             docs/ 連携だけを設定する (init に含まれる)
 npx slnmix --init-config           VB.NET 以外向けの slnmix.config.json だけを作る (init に含まれる)
 
+npx petari watch                   起動したままにすると、届いた changes.md を確認なしで適用し続ける
 npx petari                         Downloads の changes.md を適用
 npx petari undo                    直前の適用を巻き戻す
 npx petari show                    直前の適用の差分を表示
