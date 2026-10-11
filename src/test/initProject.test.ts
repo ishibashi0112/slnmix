@@ -117,6 +117,8 @@ suite("initProject", () => {
 		assert.ok(fs.logs.includes("   セットアップ完了。"));
 		assert.ok(!fs.logs.includes("   "));
 		assert.ok(fs.logs.some((line) => line.includes("セットアップ完了")));
+		// VB.NET の構成ではビルドのコマンドも案内する
+		assert.ok(fs.logs.some((line) => line.includes("npx slnmix build")));
 	});
 
 	test("2 回目は何も変えない(冪等)", () => {
@@ -172,6 +174,8 @@ suite("initProject", () => {
 		const fs = fakeFs([".git/", "src/", "tests/", "package.json"]);
 		const result = initProject(REPO, fs.deps);
 		assert.deepStrictEqual(result, { exitCode: 0, layout: "generic" });
+		// generic では MSBuild のビルドを案内しない
+		assert.ok(!fs.logs.some((line) => line.includes("npx slnmix build")));
 		assert.deepStrictEqual(readJson(fs, "slnmix.config.json"), {
 			kind: "generic",
 			extraRoots: [

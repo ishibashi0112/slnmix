@@ -393,6 +393,27 @@ Windows は PowerShell の `Set-Clipboard`、macOS は `pbcopy`、Linux は `xcl
 空行が抜けることがあります。適用側の [petari](https://github.com/ishibashi0112/petari)
 (v0.8.0 以降)は空行の差を無視して照合するので、そのまま適用できます。
 
+## ビルドエラーの受け渡し(`slnmix build`、v0.20.0〜)
+
+```console
+npx slnmix build                    # 対象の .sln / .vbproj を MSBuild でビルド
+npx slnmix build --configuration Release
+npx slnmix build --msbuild "C:\path\to\MSBuild.exe"
+```
+
+失敗すると、エラーごとに**今の実ファイルの周辺行**を付けた文面をクリップボードに入れます
+(`--no-clip` なら標準出力)。Copilot Chat の本文に貼れば、AI は最新の内容から修正の
+changes.md を書けます(パックを作った後に petari で書き換わった行でも、SEARCH が
+食い違いません)。成功したときは何も入れません。
+
+- 対象の決め方とルートは `npx slnmix` と同じ(`slnmix.config.json` の `target` も使う)。
+  `kind: "generic"` の構成では使えません
+- MSBuild は vswhere(VS 2017 以降・Build Tools)> VS 2015 / 2013 の MSBuild >
+  .NET Framework 4 の MSBuild の順に探します。Windows 以外では `--msbuild` が必要です
+- エラーは MSBuild のファイルロガー(エラーのみ・UTF-8)から取り出すので、コンソールの
+  文字コードに左右されません。載せるのは先頭 20 件までです
+- `build` という名前のフォルダを入力にするときは `./build` と書いてください
+
 ## petari 連携(規約文の自動付与)
 
 AI チャットの返答をローカルへ適用する CLI

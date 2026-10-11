@@ -13,6 +13,7 @@
 
 import { spawnSync } from "child_process";
 import * as fs from "fs";
+import * as os from "os";
 import * as path from "path";
 import { parseArgs } from "util";
 import {
@@ -23,6 +24,7 @@ import {
 	renderBuiltinProcedure,
 } from "./assets/procedure";
 import { describeAutoTests, detectAutoTests } from "./autoTests";
+import { buildErrorReport, parseMsbuildErrors } from "./buildErrors";
 import { writeClipboard } from "./clipboard";
 import { buildDesignerFileMatcher } from "./designerFileFilter";
 import { decideMode, describeDocs, resolveDocs, type DocsResolution } from "./docs";
@@ -30,6 +32,7 @@ import { initDocs } from "./initDocs";
 import { initConfig } from "./initConfig";
 import { planHandoff } from "./handoff";
 import { initProject, type PetariInitOutcome } from "./initProject";
+import { locateMsbuild, runMsbuild, runVswhere } from "./msbuildRunner";
 import { resolveInstructionFile } from "./instructionFile";
 import {
 	assembleOutput,
@@ -59,6 +62,13 @@ const USAGE = `slnmix — .sln / .vbproj の論理構成に基づく repomix 互
 使い方:
   slnmix init [<ディレクトリ>]   初回セットアップ(一回だけ。リポジトリ直下で実行)
   slnmix [<solution.sln | project.vbproj | ディレクトリ>] [オプション]
+  slnmix build [<solution.sln | project.vbproj | ディレクトリ>] [ビルドのオプション]
+
+  slnmix build は対象(入力の決め方はパックと同じ)を MSBuild でビルドし、
+  失敗したらエラーと今のファイルの周辺行を Copilot Chat に貼れる形で
+  クリップボードに入れます(--no-clip なら標準出力へ)。成功なら何も入れません。
+  MSBuild は vswhere(VS 2017 以降)> VS 2015 / 2013 > .NET Framework 4 の順に探します。
+  build という名前のフォルダを入力にするときは ./build と書いてください。
 
   slnmix init は構成の判定(.sln / .vbproj、1 段下の .sln、VB.NET 以外の generic)、
   docs/ 連携、.gitignore への生成物の追記、petari init(protocol.md と .petari/)を
@@ -143,6 +153,12 @@ const USAGE = `slnmix — .sln / .vbproj の論理構成に基づく repomix 互
       --no-clip         Copilot Chat に貼るものをクリップボードに入れない(既定では
                         パックが貼付上限の目安以内ならパック全体を、超えるなら
                         本文用テキストを入れる)
+
+ビルドのオプション(slnmix build):
+      --msbuild <path>  MSBuild.exe のパス(既定: 自動検出。Windows 以外では必須)
+      --configuration <name>
+                        /p:Configuration に渡す構成(既定: ソリューションの既定)
+      --no-clip         エラーの文面をクリップボードではなく標準出力へ出す
   -v, --version         バージョン表示
   -h, --help            このヘルプ
 
@@ -157,6 +173,7 @@ const USAGE = `slnmix — .sln / .vbproj の論理構成に基づく repomix 互
   npx slnmix --print-procedure > procedure.md      (手順文をカスタマイズ)
   npx slnmix init && npx slnmix                   (VB.NET でも TypeScript 等でも同じ)
   npx slnmix                                       (以後は文書の状態からモード自動)
+  npx slnmix build                                 (ビルドし、失敗ならエラーをコピー)
 
 M365 Copilot Chat への渡し方:
   実行後、貼るものがクリップボードに入っています(--no-clip で無効)。
@@ -239,6 +256,88 @@ function listDirectoryNames(absolutePath: string): string[] | undefined {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** ログの末尾(エラーの行を取り出せなかったときに文面へ載せる分) */
+const BUILD_LOG_TAIL_LINES = 40;
+
+/**
+ * slnmix build: MSBuild でビルドし、失敗したらエラーと今のファイルの周辺行を
+ * Copilot Chat に貼れる文面にしてクリップボードへ入れる(設計書 §22)
+ */
+function runBuild(
+	targetPath: string,
+	rootDir: string,
+	options: { msbuild: string | undefined; configuration: string | undefined; clip: boolean },
+): number {
+	const located = locateMsbuild(options.msbuild, {
+		platform: process.platform,
+		env: process.env,
+		isFile: isFilePath,
+		runVswhere,
+	});
+	if (located.kind === "error") {
+		console.error(located.message);
+		return 1;
+	}
+	console.error(`MSBuild: ${located.path}(${located.source})`);
+
+	// エラーだけを UTF-8 のログに書かせる(コンソールのコードページに左右されない)
+	const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "slnmix-build-"));
+	try {
+		const logFile = path.join(tempDir, "errors.log");
+		const run = runMsbuild(located.path, targetPath, {
+			...(options.configuration !== undefined ? { configuration: options.configuration } : {}),
+			logFile,
+		});
+		if (run.kind === "error") {
+			console.error(`MSBuild を起動できませんでした: ${run.message}`);
+			return 1;
+		}
+		if (run.status === 0) {
+			console.error("ビルドに成功しました。");
+			return 0;
+		}
+		const log = fs.existsSync(logFile) ? decodeSourceBuffer(fs.readFileSync(logFile)) : "";
+		const errors = parseMsbuildErrors(log);
+		if (errors.length === 0 && log.trim() === "") {
+			console.error(
+				`ビルドに失敗しました(終了コード ${run.status})。エラーの行を取り出せなかったので、上の MSBuild の出力を確認してください。`,
+			);
+			return 1;
+		}
+		const report = buildErrorReport(errors, log.split(/\r?\n/).slice(-BUILD_LOG_TAIL_LINES).join("\n"), {
+			rootDir,
+			readLines: (absolutePath) => {
+				try {
+					const lines = decodeSourceBuffer(fs.readFileSync(absolutePath)).split(/\r?\n/);
+					// 末尾の改行の後ろは行ではない
+					if (lines.length > 1 && lines[lines.length - 1] === "") {
+						lines.pop();
+					}
+					return lines;
+				} catch {
+					return undefined;
+				}
+			},
+		});
+		const count = errors.length === 0 ? "エラーのログ" : `エラー ${errors.length} 件と周辺のコード`;
+		if (options.clip) {
+			const clipped = writeClipboard(report);
+			if (clipped.ok) {
+				console.error(
+					`ビルドに失敗しました。${count}をクリップボードにコピーしました → Copilot Chat の本文に貼って送信してください`,
+				);
+				return 1;
+			}
+			console.error(`[warning] クリップボードにコピーできませんでした(${clipped.message})。文面を標準出力に出します`);
+		}
+		process.stdout.write(report);
+		console.error(`ビルドに失敗しました。上の文面(${count})を Copilot Chat の本文に貼って送信してください`);
+		return 1;
+	} finally {
+		fs.rmSync(tempDir, { recursive: true, force: true });
+	}
 }
 
 /**
@@ -409,6 +508,8 @@ function main(): number {
 			"no-prompt": { type: "boolean", default: false },
 			"print-prompt": { type: "boolean", default: false },
 			"no-clip": { type: "boolean", default: false },
+			msbuild: { type: "string" },
+			configuration: { type: "string" },
 			version: { type: "boolean", short: "v", default: false },
 			help: { type: "boolean", short: "h", default: false },
 		},
@@ -504,7 +605,19 @@ function main(): number {
 		return 0;
 	}
 
-	const resolution = resolveTarget(positionals[0], process.cwd(), {
+	// slnmix build [入力]: 入力の決め方とルートはパックと同じ
+	const building = positionals[0] === "build";
+	const inputArg = building ? positionals[1] : positionals[0];
+	if (building && positionals.length > 2) {
+		console.error("slnmix build に渡せる入力は 1 つだけです。");
+		return 1;
+	}
+	if (!building && (values.msbuild !== undefined || values.configuration !== undefined)) {
+		console.error("--msbuild / --configuration は slnmix build でのみ使えます。");
+		return 1;
+	}
+
+	const resolution = resolveTarget(inputArg, process.cwd(), {
 		isDirectory: isDirectoryPath,
 		isFile: isFilePath,
 		listFileNames: FS_DEPS.listFileNames,
@@ -561,6 +674,20 @@ function main(): number {
 		if (root.reason !== "target") {
 			console.error(`ルート: ${rootDir}(${describeRootReason(root.reason)})`);
 		}
+	}
+
+	if (building) {
+		if (targetPath === undefined) {
+			console.error(
+				'slnmix build は .sln / .vbproj の構成でのみ使えます(kind: "generic" のプロジェクトは、そのプロジェクトのビルド・テストのコマンドを使ってください)。',
+			);
+			return 1;
+		}
+		return runBuild(targetPath, rootDir, {
+			msbuild: values.msbuild,
+			configuration: values.configuration,
+			clip: !values["no-clip"],
+		});
 	}
 
 	// docs/ 連携の初回セットアップ(パックは作らない)

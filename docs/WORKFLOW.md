@@ -18,12 +18,16 @@
                          どちらかは実行末尾の 1 行に出る)
            AI の changes.md をダウンロード → watch が自動で適用
                                        (watch を使わないときは npx petari)
-           ビルド → pnpm test:all      → 失敗ならクリップボードのレポートをチャットに貼る
+           npx slnmix build           → 失敗ならエラーと周辺のコードがクリップボードに入る
+                                         → チャットに貼る
+           pnpm test:all              → 失敗ならクリップボードのレポートをチャットに貼る
            手動確認は引継ぎ書の手動項目だけ → 「OK」と AI に伝える
 ```
 
-自動テストが無いプロジェクト (旧 WinForms のみ等) では最後の 2 行が従来どおり
+自動テストが無いプロジェクト (旧 WinForms のみ等) では `pnpm test:all` の行が無く、
 「ビルド・動作確認 → 結果を AI に伝える」になります (AI にもテストは求められません)。
+`npx slnmix build` は MSBuild でビルドするコマンドで (slnmix v0.20.0〜)、Visual Studio で
+ビルドしてエラー一覧をコピーする代わりに使えます。成功すれば何もコピーしません。
 
 設計から始めるか、実装の続きか、引継ぎ書を書くかは slnmix と AI が決めます。
 あなたが打つコマンドは `npx slnmix` と `npx petari` (テストがあれば `pnpm test:all`) だけです。
@@ -104,9 +108,10 @@ draft の設計書が 2 つ以上あるときは `--design <名前>` で対象�
 2. 新しいチャットに添付 + 貼付。依頼文は既定で入っているので、追加で言うことは
    通常ありません
 3. AI が changes.md (コードと、テストがあるプロジェクトならテストも) を返す →
-   `npx petari` → ビルド → `pnpm test:all`
-4. ビルドエラーなら同じチャットでエラー内容を、テストが失敗したらクリップボードに
-   入っている失敗レポート (`test-results/report.md`) を貼って修正を頼む (→ 3 に戻る)
+   `npx petari` → `npx slnmix build` → `pnpm test:all`
+4. ビルドエラーならクリップボードに入っているエラーと周辺のコードを、テストが失敗したら
+   クリップボードに入っている失敗レポート (`test-results/report.md`) を、同じチャットに
+   貼って修正を頼む (→ 3 に戻る)
 5. 全件通ったら、手動確認は引継ぎ書 (設計書 §9 の「完了条件: 手動確認」) の項目だけ
    行い、「ビルド OK、テスト OK、手動確認 OK」と伝える。AI はその回答で仕様書の更新と
    引継ぎ書の書き直しを changes.md で返し、チャット移行を案内する。テストが無い
@@ -216,6 +221,7 @@ npx slnmix --task "依頼文"         依頼文を自分で指定する (既定�
 npx slnmix --design 画面名         その設計書を新規作成 / 継続する design モード
 npx slnmix --mode plan             方針だけ先に出させる
 npx slnmix --no-clip               クリップボードに入れない (既定は貼るものを自動でコピー)
+npx slnmix build                   MSBuild でビルドし、失敗ならエラーと周辺のコードをコピー
 npx slnmix init                    初回セットアップ (リポジトリ直下で。冪等。protocol.md の更新にも)
 npx slnmix --init-docs             docs/ 連携だけを設定する (init に含まれる)
 npx slnmix --init-config           VB.NET 以外向けの slnmix.config.json だけを作る (init に含まれる)
