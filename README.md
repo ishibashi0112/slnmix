@@ -49,6 +49,11 @@ DependentUpon 解決済み)に基づいてエクスポートします。
   自動で決める。文書の更新は AI が changes.md で出し petari が保存する(下記)
 - 出力は BOM 付き UTF-8(Windows 系ツールの誤判定防止)
 
+## 導入の審査(情報システム部門向け)
+
+[docs/SECURITY-REVIEW.md](docs/SECURITY-REVIEW.md) に、データの流れ・通信の有無・
+依存パッケージ・起動する外部コマンド・残るリスクをまとめています(petari を含む)。
+
 ## UI サマリー
 
 Designer.vb の原文は座標・サイズの羅列でトークンを浪費しますが、丸ごと捨てると
