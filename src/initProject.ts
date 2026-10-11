@@ -309,8 +309,9 @@ export function initProject(rootDir: string, deps: InitProjectDeps): InitProject
 
 	deps.log("");
 	deps.log("セットアップ完了。以後は次の 2 つだけです:");
-	deps.log("  npx slnmix   repomix-output.xml を添付し、repomix-output.prompt.md の中身を本文に貼る");
-	deps.log("  npx petari   AI の changes.md を適用する");
+	deps.log("  npx slnmix         Copilot Chat に貼るものをクリップボードに入れる(本文に貼って送信)");
+	deps.log("  npx petari watch   別の端末で起動したままにすると、ダウンロードした changes.md を自動で適用");
+	deps.log("                     (起動しないときは、ダウンロードのたびに npx petari)");
 	deps.log("slnmix.config.json・docs/・protocol.md は git にコミットしてください。");
 	return { exitCode: 0, layout: layout.layout };
 }
