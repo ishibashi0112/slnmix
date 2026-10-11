@@ -312,6 +312,9 @@ export function initProject(rootDir: string, deps: InitProjectDeps): InitProject
 	deps.log("  npx slnmix         Copilot Chat に貼るものをクリップボードに入れる(本文に貼って送信)");
 	deps.log("  npx petari watch   別の端末で起動したままにすると、ダウンロードした changes.md を自動で適用");
 	deps.log("                     (起動しないときは、ダウンロードのたびに npx petari)");
+	if (layout.layout === "solution") {
+		deps.log("  ビルドは npx slnmix build で。失敗するとエラーと周辺のコードがクリップボードに入ります");
+	}
 	deps.log("slnmix.config.json・docs/・protocol.md は git にコミットしてください。");
 	return { exitCode: 0, layout: layout.layout };
 }

@@ -44,6 +44,12 @@ workbench は 2026-09 時点で凍結(新機能は追わない)。
   超えるなら本文用テキストをクリップボードへ入れる(`--no-clip` で無効)。
   クリップボードは OS コマンド(PowerShell Set-Clipboard / pbcopy / xclip)で、
   自動テストなし(petari の infra/clipboard.ts と同じ方式)
+- `src/buildErrors.ts` / `src/msbuildRunner.ts` — `slnmix build`(設計書 §22、v0.20.0)。
+  対象(パックと同じ決め方)を MSBuild でビルドし、失敗したらファイルロガー(ErrorsOnly・
+  UTF-8)のログから標準のエラー形式を取り出して、今のファイルの周辺行(`│` 区切り。
+  petari の失敗レポートと同じ書式)付きの文面をクリップボードへ入れる。MSBuild の場所は
+  --msbuild > vswhere > MSBuild 14.0 / 12.0 > .NET Framework 4(実在するものだけ。
+  deps 注入で単体テスト)。起動自体は自動テストなし
 - `src/initConfig.ts` — `--init-config`(generic 構成の `slnmix.config.json` を
   実在するディレクトリだけで作る冪等な scaffold。候補が無ければ推測せずエラー)
 - `src/designerFileFilter.ts` — `--include-designer-file` のパターン一致
