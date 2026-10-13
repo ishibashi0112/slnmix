@@ -1,10 +1,11 @@
 /**
- * AI チャットだけでの DB 確認(手順文 v8、2026-10-13)。
+ * AI チャットだけでの DB 確認・動作検証(手順文 v8 / v9、2026-10-13)。
  *
  * ルート直下の docs/db/schema.md(ashiato schema の出力。テスト用 DB の
  * テーブル定義で、行の値は含まない)があるときだけ、パックに <db_schema> として
- * 入れ、手順文に「DB の確認」の節を足す(procedure.ts の DB_SECTIONS)。
- * AI は確認用の SELECT を checks/*.sql で出し、ユーザーが ashiato query で
+ * 入れ、手順文に「DB の確認」「動作検証」の節を足す(procedure.ts の DB_SECTIONS)。
+ * AI は確認用の SELECT を checks/*.sql で、操作と期待する DB の変化を
+ * checks/*.verify.md で出し、ユーザーが ashiato query / ashiato verify で
  * 実行して結果をチャットに貼る。slnmix 自身は DB に接続しない。
  *
  * 本文用テキストには入れない(テーブルが多いと貼付の上限を超えるため。

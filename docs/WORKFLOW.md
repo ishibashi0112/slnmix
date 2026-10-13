@@ -227,13 +227,34 @@ DB に接続するのは ashiato だけで、実行するのは SELECT だけで
 1. 一回だけ: `npx ashiato schema --tables "<使うテーブル>"` でテーブル定義を
    `docs/db/schema.md` に書き出す (接続先は `--db` か環境変数 `ASHIATO_DB_URL`)。
    テーブルが変わったら打ち直す
-2. 以降の `npx slnmix` が「DB の確認: あり」と表示し、パックにテーブル定義を、
-   手順文に「DB の確認」の節を入れる
+2. 以降の `npx slnmix` が「DB の確認・動作検証: あり」と表示し、パックにテーブル定義を、
+   手順文に「DB の確認」「動作検証」の節を入れる
 3. AI は値の確認が要るとき、`checks/<名前>.sql` を changes.md で出し、回答の末尾に
    `npx ashiato query checks/<名前>.sql` を書く。petari で当ててからそのコマンドを打つと、
    結果 (文ごとの見出し・SQL・先頭 50 行) がクリップボードに入るので、チャットに貼る
 4. SELECT 以外が混ざっていると「Nothing was run」で何も実行せず、理由がクリップボードに
    入る。そのままチャットに貼れば書き直してもらえる
+
+### 3-9. 画面の操作で DB が期待どおりに変わるかを確かめる (ashiato verify、slnmix v0.22.0〜)
+
+3-8 と同じ準備 (`docs/db/schema.md`) で、手順文に「動作検証」の節も入ります。どのアプリ
+(旧 WinForms・Web 画面・バッチ) でも使えます。ashiato は 0.2.0 以降が必要です。
+
+1. AI は動作を確かめるとき、`checks/<名前>.verify.md` (手順ごとの操作と、期待する DB の
+   変化) を changes.md で出し、回答の末尾に `npx ashiato verify checks/<名前>.verify.md`
+   を書く。petari で当ててからそのコマンドを打つ
+2. 手順が 1 つずつ表示される。アプリで操作してから Enter を押す (画面に出たことなどを
+   メモしたいときは、入力してから Enter。`s` で飛ばす、`q` で終わる)
+3. 手順ごとに `✓ OK` か `✗ NG` が出る。NG のときは違いが表示され、書き込みが遅れていた
+   だけなら `r` でもう一度照合できる
+4. 最後に、OK / NG とメモの表・期待との違い・変わった行がクリップボードに入るので、
+   チャットに貼る。AI はそこから、コードの不具合か期待の書き違いかを判断する
+5. 手順ファイルの書き方が違う・ないテーブルを書いていると「Nothing was checked」で何も
+   照合せず、直すべき点がクリップボードに入る。そのままチャットに貼れば書き直してもらえる
+
+テーブルが多い DB では、すべてのテーブルを読むと時間がかかります。`--tables "A,B,C"` で
+見張るテーブルを絞ってください (手順ファイルに書かれたテーブルは含めます)。Excel の証跡が
+要るときは `--save-session` を付け、表示された `ashiato export ...` を打ちます。
 
 ## 4. コマンド早見表
 
@@ -250,6 +271,7 @@ npx slnmix --init-config           VB.NET 以外向けの slnmix.config.json だ
 
 npx ashiato schema --tables "A,B"   テスト用 DB のテーブル定義を docs/db/schema.md に書き出す (3-8)
 npx ashiato query checks/x.sql     AI が書いた SELECT を実行し、結果をコピー (3-8)
+npx ashiato verify checks/x.verify.md  AI が書いた手順どおりに操作し、DB の変化の照合結果をコピー (3-9)
 
 npx petari watch                   起動したままにすると、届いた changes.md を確認なしで適用し続ける
 npx petari                         Downloads の changes.md を適用
