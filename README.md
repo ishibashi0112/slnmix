@@ -504,8 +504,8 @@ npx ashiato schema --tables "受注*,顧客"     # 一回だけ: docs/db/schema.
 npx ashiato query checks/受注合計.sql        # AI が書いた SELECT を実行し、結果をクリップボードへ
 ```
 
-ashiato はまだ npm に公開していないため、パッケージファイルから
-`npm install -g <ashiato-x.y.z.tgz> mssql oracledb` のように入れておきます(使う DB のドライバーだけでよい)。
+ashiato は `npm install -g ashiato mssql oracledb` のように、使う DB のドライバーと一緒に
+グローバルに入れておきます(アプリのルートで `npx ashiato` がそのまま動きます)。
 `ashiato query` が実行するのは SELECT / WITH だけで、書き込みやロックの語が 1 文でもあると
 1 文も実行しません。接続には SELECT だけを許可したユーザーを使い、結果(DB の値)を
 チャットに貼ってよいかは社内の決まりに従ってください(流れは

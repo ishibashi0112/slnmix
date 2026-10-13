@@ -220,10 +220,10 @@ DB に接続するのは ashiato だけで、実行するのは SELECT だけで
 実行しません)。接続には SELECT だけを許可したユーザーを使い、テスト用 DB の値を
 チャットに貼ってよいかは社内の決まりに従ってください。
 
-0. 一回だけ: ashiato を入れる。ashiato はまだ npm に公開していないので、パッケージファイル
-   (`ashiato-0.1.0.tgz`。手に入れ方は ashiato の docs/trial-guide.ja.md の 2-1) を
-   `npm install -g <tgz のパス> mssql oracledb` (使う DB のドライバーだけでよい) で入れる。
-   グローバルに入れておくと、アプリのルートで `npx ashiato ...` がそのまま動く
+0. 一回だけ: `npm install -g ashiato mssql oracledb` (使う DB のドライバーだけでよい) で
+   ashiato を入れる。グローバルに入れておくと、アプリのルートで `npx ashiato ...` が
+   そのまま動く。社内のレジストリに ashiato が無いときは、パッケージファイルから入れる
+   (ashiato の docs/trial-guide.ja.md の 2-2)
 1. 一回だけ: `npx ashiato schema --tables "<使うテーブル>"` でテーブル定義を
    `docs/db/schema.md` に書き出す (接続先は `--db` か環境変数 `ASHIATO_DB_URL`)。
    テーブルが変わったら打ち直す
