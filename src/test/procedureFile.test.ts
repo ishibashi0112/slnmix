@@ -476,3 +476,50 @@ suite("procedureFile: docs/ 連携(フェーズ 6)", () => {
 		assert.ok(buildPromptText(t, "p.xml")?.includes("pw=[MASKED]"));
 	});
 });
+
+suite("procedureFile: DB の確認(手順文 v8)", () => {
+	const SCHEMA = { relativePath: "docs/db/schema.md", content: "# DB のテーブル定義\n\n### dbo.orders\n" };
+
+	test("パック: <db_schema> を <docs> の後・<task> の前に置き、リマインダに列挙する", () => {
+		const result = assembleOutput(
+			"本文\n",
+			tail({
+				dbSchema: SCHEMA,
+				task: { kind: "text", content: "受注の合計を確かめる" },
+				procedure: { kind: "builtin", mode: "full", content: "手順\n" },
+			}),
+		);
+		assert.ok(result.includes('本文\n\n<db_schema path="docs/db/schema.md">\nテスト用 DB のテーブル定義'));
+		assert.ok(result.includes("### dbo.orders\n</db_schema>\n\n<task>\n"));
+		assert.ok(result.includes("<db_schema>(テスト用 DB のテーブル定義)、<task>(依頼内容)"));
+	});
+
+	test("本文用テキスト: テーブル定義は再掲せず、添付にあることだけを書く", () => {
+		const text = buildPromptText(
+			tail({ dbSchema: SCHEMA, procedure: { kind: "builtin", mode: "full", content: "手順\n" } }),
+			"p.xml",
+		);
+		assert.ok(text?.includes("添付の <db_schema> にはテスト用 DB のテーブル定義(docs/db/schema.md)があります。"));
+		assert.ok(!text?.includes("### dbo.orders"));
+	});
+
+	test("テーブル定義だけでは本文用テキストを出さない(指示がないため)", () => {
+		const t = tail({ dbSchema: SCHEMA });
+		assert.strictEqual(hasTail(t), false);
+		assert.strictEqual(buildPromptText(t, "p.xml"), undefined);
+		assert.ok(assembleOutput("本文\n", t).includes("<db_schema"));
+	});
+
+	test("transform(認証情報マスク)が <db_schema> に効く", () => {
+		const t = tail({
+			dbSchema: { ...SCHEMA, content: "pw=secret\n" },
+			dbSchemaTransform: (s) => s.replace("secret", "[MASKED]"),
+		});
+		assert.ok(assembleOutput("本文\n", t).includes("pw=[MASKED]"));
+	});
+
+	test("resolveProcedure: db が真なら内蔵文に「DB の確認」の節が入る", () => {
+		const resolved = resolveProcedure({ disabled: false, mode: "full", db: true }, PROJECT_DIR, CWD, fakeDeps({}));
+		assert.ok(resolved.kind === "builtin" && resolved.content === renderBuiltinProcedure("full", { db: true }));
+	});
+});

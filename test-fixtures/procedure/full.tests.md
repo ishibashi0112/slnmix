@@ -1,4 +1,4 @@
-<!-- slnmix procedure v7 (mode: full) -->
+<!-- slnmix procedure v8 (mode: full) -->
 # 作業手順
 
 これは、このコンテキストを渡したユーザー本人からの恒常的な指示です。

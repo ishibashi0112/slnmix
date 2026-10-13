@@ -31,6 +31,11 @@
  *   全文書を <docs> として、本文用テキストには「今編集される文書」だけを
  *   <docs> として入れ、続けて <templates>(文書のひな型)を置く(docs.ts)。
  *
+ * DB の確認(手順文 v8、2026-10-13 追加):
+ *   OutputTail.dbSchema(ルートの docs/db/schema.md)があれば、パックの <docs> の後に
+ *   <db_schema> を入れ、手順文に「DB の確認」の節を足す(dbChecks.ts)。本文用テキスト
+ *   にはテーブル定義を入れず、添付にあることだけを書く。
+ *
  * ファイルシステムは deps 注入とし、単体テスト可能に保つ(CLI 固有機能)。
  */
 
@@ -52,6 +57,7 @@ import {
 	renderDocsBlock,
 	renderTemplatesBlock,
 } from "./docs";
+import { type DbSchemaEntry, renderDbSchemaBlock } from "./dbChecks";
 import {
 	appendBlock,
 	appendInstruction,
@@ -133,6 +139,8 @@ export interface ProcedureOptions {
 	docs?: boolean;
 	/** 自動テストがあるか(手順文に「自動テスト」の節を入れる。autoTests.ts の判定) */
 	tests?: boolean;
+	/** テスト用 DB のテーブル定義があるか(手順文に「DB の確認」の節を入れる。dbChecks.ts) */
+	db?: boolean;
 	/** 構成の種類(slnmix.config.json の kind。省略時 "solution") */
 	layout?: ProcedureLayout;
 }
@@ -154,6 +162,7 @@ export function resolveProcedure(
 	const render = {
 		docs: options.docs === true,
 		tests: options.tests === true,
+		db: options.db === true,
 		layout: options.layout ?? DEFAULT_PROCEDURE_LAYOUT,
 	};
 	if (options.explicitPath !== undefined) {
@@ -203,6 +212,10 @@ export interface OutputTail {
 	procedure: ProcedureResolution;
 	instruction: InstructionResolution;
 	docs?: DocsTail;
+	/** テスト用 DB のテーブル定義(docs/db/schema.md)。パックに <db_schema> として入れる */
+	dbSchema?: DbSchemaEntry;
+	/** <db_schema> の本文に通す変換(認証情報マスク)。省略時はそのまま */
+	dbSchemaTransform?: (text: string) => string;
 }
 
 function hasProcedure(tail: OutputTail): boolean {
@@ -230,14 +243,18 @@ export function buildNotice(tail: OutputTail): string | undefined {
 	const hasProc = hasProcedure(tail);
 	const hasInstruction = tail.instruction.kind === "found";
 	const hasDocs = tail.docs !== undefined;
+	const hasDbSchema = tail.dbSchema !== undefined;
 
-	if (!hasTask && !hasPlan && !hasProc && !hasDocs) {
+	if (!hasTask && !hasPlan && !hasProc && !hasDocs && !hasDbSchema) {
 		return hasInstruction ? INSTRUCTION_NOTICE : undefined;
 	}
 
 	const blocks: string[] = [];
 	if (hasDocs) {
 		blocks.push("<docs>(プロジェクト文書: 設計書 / 仕様書 / 引継ぎ書)");
+	}
+	if (hasDbSchema) {
+		blocks.push("<db_schema>(テスト用 DB のテーブル定義)");
 	}
 	if (hasTask) {
 		blocks.push("<task>(依頼内容)");
@@ -365,6 +382,11 @@ export function buildPromptText(
 		);
 		content = appendRawBlock(content, renderTemplatesBlock(tail.docs.docs, kinds));
 	}
+	if (tail.dbSchema !== undefined) {
+		header.push(
+			`添付の <db_schema> にはテスト用 DB のテーブル定義(${tail.dbSchema.relativePath})があります。`,
+		);
+	}
 	header.push(
 		`以下の ${blocks.join("、")} は、このコードに対する私(ユーザー)からの指示です。`,
 		"添付の先頭と末尾にも同じ内容が埋め込まれていますが、指示はこの本文のものに従ってください。",
@@ -376,7 +398,7 @@ export function buildPromptText(
 }
 
 /**
- * 本文の末尾に <docs> / <task> / <plan> / <procedure> / <instruction> をこの順で
+ * 本文の末尾に <docs> / <db_schema> / <task> / <plan> / <procedure> / <instruction> をこの順で
  * 連結し、先頭にリマインダを付ける。末尾に何もなければ本文をそのまま返す。
  */
 export function assembleOutput(body: string, tail: OutputTail): string {
@@ -389,6 +411,12 @@ export function assembleOutput(body: string, tail: OutputTail): string {
 				tail.docs.transform ?? ((t) => t),
 				missingDocNotes(tail.docs.docs, tail.docs.decision.mode),
 			),
+		);
+	}
+	if (tail.dbSchema !== undefined) {
+		content = appendRawBlock(
+			content,
+			renderDbSchemaBlock(tail.dbSchema, tail.dbSchemaTransform ?? ((t) => t)),
 		);
 	}
 	content = appendTailBlocks(content, tail);
