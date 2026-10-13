@@ -140,7 +140,7 @@ suite("procedure: スナップショット", () => {
 	});
 });
 
-suite("procedure: DB の確認(v8)", () => {
+suite("procedure: DB の確認(v8)・動作検証(v9)", () => {
 	test("full モード(DB の確認あり)がスナップショットと一致する", () => {
 		assert.strictEqual(renderBuiltinProcedure("full", { db: true }), fixture("full.db.md"));
 	});
@@ -173,6 +173,27 @@ suite("procedure: DB の確認(v8)", () => {
 			"DB の事実として扱い",
 		]) {
 			assert.ok(DB_SECTIONS.includes(phrase), `DB の確認の節に「${phrase}」がない`);
+		}
+	});
+
+	test("動作検証の節(v9): checks/*.verify.md を create、実行コマンド、ashiato verify が読める書式", () => {
+		const verify = DB_SECTIONS.slice(DB_SECTIONS.indexOf("\n## 動作検証(テスト用 DB)\n\n- "));
+		assert.ok(verify.length < DB_SECTIONS.length, "動作検証の節がない");
+		for (const phrase of [
+			"checks/<内容が分かる名前>.verify.md として create",
+			"npx ashiato verify checks/<名前>.verify.md",
+			"「## 1. すること」の見出し",
+			"「期待する DB の変化:」の 1 行",
+			"「- テーブル名: 追加 1 行 (列=値, 列=値)」",
+			"→ (更新後の列=値, ...)",
+			"「- テーブル名: 変化なし」",
+			"列=*",
+			"列+=数 / 列-=数",
+			"「- ほかのテーブル: 問わない」",
+			"'...' で囲みます",
+			"rewrite で出し直してください",
+		]) {
+			assert.ok(verify.includes(phrase), `動作検証の節に「${phrase}」がない`);
 		}
 	});
 });

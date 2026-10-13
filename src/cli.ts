@@ -882,10 +882,10 @@ function main(): number {
 	const autoTests = detectAutoTests(output.filePaths, config.extraRoots);
 	console.error(`自動テスト: ${describeAutoTests(autoTests)}`);
 
-	// DB の確認(手順文 v8): ルートの docs/db/schema.md(ashiato schema の出力)があれば
-	// パックに <db_schema> を入れ、手順文に「DB の確認」の節を足す。無ければ従来と同一
+	// DB の確認・動作検証(手順文 v8 / v9): ルートの docs/db/schema.md(ashiato schema の出力)が
+	// あればパックに <db_schema> を入れ、手順文に「DB の確認」「動作検証」の節を足す。無ければ従来と同一
 	const dbSchema = resolveDbSchema(rootDir, { readTextFile: readSourceTextFile });
-	console.error(`DB の確認: ${describeDbSchema(dbSchema)}`);
+	console.error(`DB の確認・動作検証: ${describeDbSchema(dbSchema)}`);
 
 	// petari 等の規約文(protocol.md)を出力末尾へ連結する(なければ従来どおり)
 	const instruction = resolveInstructionFile(

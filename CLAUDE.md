@@ -50,10 +50,12 @@ workbench は 2026-09 時点で凍結(新機能は追わない)。
   petari の失敗レポートと同じ書式)付きの文面をクリップボードへ入れる。MSBuild の場所は
   --msbuild > vswhere > MSBuild 14.0 / 12.0 > .NET Framework 4(実在するものだけ。
   deps 注入で単体テスト)。起動自体は自動テストなし
-- `src/dbChecks.ts` — AI チャットだけでの DB 確認(設計書 §23、v0.21.0)。ルートに
-  `docs/db/schema.md`(ashiato schema の出力 = テスト用 DB のテーブル定義)があるときだけ、
-  パックに `<db_schema>` を入れ、手順文 v8 の `{{DB_SECTIONS}}`(確認用の SELECT を
-  checks/*.sql で出させ、利用者が `ashiato query` で実行して結果を貼る)を置換する。
+- `src/dbChecks.ts` — AI チャットだけでの DB 確認・動作検証(設計書 §23・§24、v0.21.0 / v0.22.0)。
+  ルートに `docs/db/schema.md`(ashiato schema の出力 = テスト用 DB のテーブル定義)があるときだけ、
+  パックに `<db_schema>` を入れ、手順文の `{{DB_SECTIONS}}` を置換する。v8 の「DB の確認」
+  (確認用の SELECT を checks/*.sql で出させ、利用者が `ashiato query` で実行して結果を貼る)と
+  v9 の「動作検証」(操作と期待する DB の変化を checks/*.verify.md で出させ、利用者が
+  `ashiato verify` で操作して照合の結果を貼る。書式は ashiato の verifyFile.ts が読める形)。
   無いときの出力は v0.20.0 と同一(手順文は版数の行だけ)。slnmix 自身は DB に接続しない
 - `src/initConfig.ts` — `--init-config`(generic 構成の `slnmix.config.json` を
   実在するディレクトリだけで作る冪等な scaffold。候補が無ければ推測せずエラー)
