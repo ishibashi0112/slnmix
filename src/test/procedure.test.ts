@@ -12,6 +12,7 @@ import * as assert from "assert";
 import * as fs from "fs";
 import * as path from "path";
 import {
+	DB_SECTIONS,
 	DOCS_SECTIONS,
 	isProcedureMode,
 	LAYOUT_TEXT,
@@ -139,6 +140,43 @@ suite("procedure: スナップショット", () => {
 	});
 });
 
+suite("procedure: DB の確認(v8)", () => {
+	test("full モード(DB の確認あり)がスナップショットと一致する", () => {
+		assert.strictEqual(renderBuiltinProcedure("full", { db: true }), fixture("full.db.md"));
+	});
+
+	test("DB の確認ありは末尾に「DB の確認」の 1 節だけ足され、docs・テストの節の後に来る(どの構成・モードでも)", () => {
+		for (const layout of ["solution", "generic"] as const) {
+			for (const mode of PROCEDURE_MODES) {
+				const plain = renderBuiltinProcedure(mode, { layout });
+				const all = renderBuiltinProcedure(mode, { layout, docs: true, tests: true });
+				assert.strictEqual(renderBuiltinProcedure(mode, { layout, db: true }), plain + DB_SECTIONS);
+				assert.strictEqual(renderBuiltinProcedure(mode, { layout, docs: true, tests: true, db: true }), all + DB_SECTIONS);
+				assert.ok(!all.includes("## DB の確認"));
+			}
+		}
+	});
+
+	test("DB の確認の節: SELECT だけ、checks/*.sql を create、実行コマンド、見出しになるコメント、行数の上限", () => {
+		assert.ok(DB_SECTIONS.startsWith("\n## DB の確認(テスト用 DB)\n\n- "));
+		assert.ok(DB_SECTIONS.endsWith("\n"));
+		for (const phrase of [
+			"<db_schema>",
+			"推測しないでください",
+			"npx ashiato schema --tables",
+			"checks/<内容が分かる名前>.sql として create",
+			"npx ashiato query checks/<名前>.sql",
+			"書いてよいのは SELECT(WITH を含む)だけです",
+			"1 文も実行されません",
+			"-- コメントで 1 行",
+			"先頭 50 行まで",
+			"DB の事実として扱い",
+		]) {
+			assert.ok(DB_SECTIONS.includes(phrase), `DB の確認の節に「${phrase}」がない`);
+		}
+	});
+});
+
 suite("procedure: 描画", () => {
 	test("プレースホルダが残らず、先頭コメントにバージョンとモードが入る", () => {
 		for (const mode of PROCEDURE_MODES) {
@@ -153,12 +191,20 @@ suite("procedure: 描画", () => {
 		}
 	});
 
-	test("テンプレートには {{MODE}} / {{MODE_SECTIONS}} / {{DOCS_SECTIONS}} / {{TEST_SECTIONS}} が 1 回ずつあり、テスト節は docs 節の直後", () => {
+	test("テンプレートには {{MODE}} / {{MODE_SECTIONS}} / {{DOCS_SECTIONS}} / {{TEST_SECTIONS}} / {{DB_SECTIONS}} が 1 回ずつあり、docs → テスト → DB の順で末尾", () => {
 		assert.strictEqual(PROCEDURE_TEMPLATE.split("{{MODE}}").length, 2);
 		assert.strictEqual(PROCEDURE_TEMPLATE.split("{{MODE_SECTIONS}}").length, 2);
 		assert.strictEqual(PROCEDURE_TEMPLATE.split("{{DOCS_SECTIONS}}").length, 2);
 		assert.strictEqual(PROCEDURE_TEMPLATE.split("{{TEST_SECTIONS}}").length, 2);
-		assert.ok(PROCEDURE_TEMPLATE.endsWith("{{DOCS_SECTIONS}}{{TEST_SECTIONS}}"));
+		assert.strictEqual(PROCEDURE_TEMPLATE.split("{{DB_SECTIONS}}").length, 2);
+		assert.ok(PROCEDURE_TEMPLATE.endsWith("{{DOCS_SECTIONS}}{{TEST_SECTIONS}}{{DB_SECTIONS}}"));
+	});
+
+	test("db: \"placeholder\" は {{DB_SECTIONS}} を残し、実行時に設定に応じて置換される", () => {
+		const printed = renderBuiltinProcedure("full", { docs: "placeholder", tests: "placeholder", db: "placeholder" });
+		assert.ok(printed.endsWith("{{DOCS_SECTIONS}}{{TEST_SECTIONS}}{{DB_SECTIONS}}"));
+		assert.strictEqual(renderProcedureTemplate(printed, "full", { db: true }), renderBuiltinProcedure("full", { db: true }));
+		assert.strictEqual(renderProcedureTemplate(printed, "full"), renderBuiltinProcedure("full"));
 	});
 
 	test("docs / tests: \"placeholder\" は {{DOCS_SECTIONS}} / {{TEST_SECTIONS}} を残す(--print-procedure 用)", () => {

@@ -44,9 +44,15 @@
  * .vbproj・Option Strict・Handles 句・Shift_JIS・e2e の 3 層構成)を外すか一般的な
  * 表現に置き換える。差し替えは {{LAYOUT:...}} プレースホルダと、「自己検証」
  * 「自動テスト」の節の該当行だけ(新しい節は足さない)。
+ *
+ * v8 (2026-10-13、AI チャットだけでの DB 確認): ルートに docs/db/schema.md
+ * (ashiato schema の出力 = テスト用 DB のテーブル定義)があるときだけ
+ * {{DB_SECTIONS}} に「DB の確認」の節(確認用の SELECT を checks/*.sql で出させ、
+ * ユーザーが ashiato query で実行して結果を貼る)が入る。無いときは空 =
+ * v7 と同じ本文。
  */
 
-export const PROCEDURE_VERSION = 7;
+export const PROCEDURE_VERSION = 8;
 
 /** 構成の種類(slnmix.config.json の kind と同じ。手順文の表現の切り替えに使う) */
 export const PROCEDURE_LAYOUTS = ["solution", "generic"] as const;
@@ -63,7 +69,7 @@ export function isProcedureMode(value: string): value is ProcedureMode {
 }
 
 /**
- * {{MODE}} / {{MODE_SECTIONS}} / {{DOCS_SECTIONS}} / {{TEST_SECTIONS}} を含む
+ * {{MODE}} / {{MODE_SECTIONS}} / {{DOCS_SECTIONS}} / {{TEST_SECTIONS}} / {{DB_SECTIONS}} を含む
  * テンプレート(procedure.md でも同じプレースホルダが使える)
  */
 export const PROCEDURE_TEMPLATE = `<!-- slnmix procedure v${PROCEDURE_VERSION} (mode: {{MODE}}{{LAYOUT:NOTE}}) -->
@@ -92,7 +98,7 @@ export const PROCEDURE_TEMPLATE = `<!-- slnmix procedure v${PROCEDURE_VERSION} (
 - 既存コードの流儀(命名・エラー処理・DB アクセスの書き方)に合わせてください。パック内に同種の処理があれば、それを手本にしてください
 {{LAYOUT:TYPE_RULE}}
 - 影響範囲は最小にしてください。求められていないリファクタリングはしないでください
-{{DOCS_SECTIONS}}{{TEST_SECTIONS}}`;
+{{DOCS_SECTIONS}}{{TEST_SECTIONS}}{{DB_SECTIONS}}`;
 
 // ---- 「回答の構成」の部品。モードごとに番号を振って組み立てる ----
 
@@ -315,6 +321,29 @@ export const TEST_SECTIONS_BY_LAYOUT: Readonly<Record<ProcedureLayout, string>> 
 /** 後方互換: solution 構成の「自動テスト」の節(v6 と同一) */
 export const TEST_SECTIONS = TEST_SECTIONS_BY_LAYOUT.solution;
 
+/** ashiato schema の既定の出力先。ルートにこれがあれば DB の確認を有効にする(dbChecks.ts) */
+export const DB_SCHEMA_PATH = "docs/db/schema.md";
+/** 確認用 SQL の置き場(ashiato query に渡すフォルダ) */
+export const DB_CHECKS_DIR = "checks";
+
+/**
+ * テスト用 DB のテーブル定義(<db_schema>)があるときだけ手順文の末尾に付く節(v8)。
+ * DB の値は推測させず、確認用の SELECT を changes.md で出させる。実行するのは
+ * ユーザー(ashiato query。SELECT 以外が 1 文でもあれば 1 文も実行しない)で、
+ * 結果の Markdown がチャットに貼られる。
+ */
+export const DB_SECTIONS = `
+## DB の確認(テスト用 DB)
+
+- <db_schema> はテスト用 DB のテーブル定義です(列・型・主キー・コメント)。テーブル名・列名・型はここから引き、推測しないでください。SQL の書き方は冒頭に書かれた DB の種類に合わせてください。載っていないテーブルが必要なら、<db_schema> にあるテーブルと足りないテーブルをすべてカンマ区切りで並べた「npx ashiato schema --tables \"<テーブル名>,<テーブル名>\"」を示し、再実行をユーザーに依頼してください(書き出しは上書きのため、今あるテーブルも並べます)
+- DB の値が答えを左右するとき(データの前提の確認、変更後の検証、不具合の原因の切り分け)は、推測で答えず、確認用の SQL を changes.md で ${DB_CHECKS_DIR}/<内容が分かる名前>.sql として create してください(同じ名前のファイルを直すときは rewrite)。回答の末尾に、ユーザーが実行するコマンドを「npx ashiato query ${DB_CHECKS_DIR}/<名前>.sql」の形で 1 行示してください。結果(Markdown)はユーザーがこのチャットに貼ります
+- 書いてよいのは SELECT(WITH を含む)だけです。INSERT / UPDATE / DELETE / DDL / EXEC / SELECT ... INTO / FOR UPDATE が 1 文でもあると、1 文も実行されません。文の区切りは ; です
+- 各文の直前に、その文で何を確かめるかと期待する結果を -- コメントで 1 行書いてください(例: -- 合計が明細の合計と一致しない受注(0 行なら OK))。このコメントが結果の見出しになります
+- 結果は 1 文につき先頭 50 行までです。件数は COUNT(*) で、差異は「期待と違う行だけを返す」SELECT で確かめ、返す行を絞ってください
+- 貼られた結果は DB の事実として扱い、結論はそこから述べてください。結果がエラーなら、エラー文から SQL を直して出し直してください
+- ${DB_CHECKS_DIR}/ の SQL は確認用です。アプリのコードや本番の手順には含めないでください
+`;
+
 export interface RenderProcedureOptions {
 	/**
 	 * docs/ 連携が有効か({{DOCS_SECTIONS}} に文書の扱いと引継ぎの節を入れる)。
@@ -328,6 +357,11 @@ export interface RenderProcedureOptions {
 	 */
 	tests?: boolean | "placeholder";
 	/**
+	 * テスト用 DB のテーブル定義があるか({{DB_SECTIONS}} に「DB の確認」の節を入れる)。
+	 * "placeholder" は docs と同じくプレースホルダを残す
+	 */
+	db?: boolean | "placeholder";
+	/**
 	 * 構成の種類(既定 "solution")。"generic" は VB 固有の記述を外す。
 	 * {{LAYOUT:...}} プレースホルダと {{MODE_SECTIONS}} / {{TEST_SECTIONS}} の
 	 * 中身がこれで決まる
@@ -337,9 +371,9 @@ export interface RenderProcedureOptions {
 
 /**
  * テンプレートの {{MODE}} / {{MODE_SECTIONS}} / {{LAYOUT:...}} / {{DOCS_SECTIONS}} /
- * {{TEST_SECTIONS}} をモードと設定に応じて置換する。プレースホルダがなければそのまま返す
- * (procedure.md による上書きで使う)。docs / tests が無効ならそれぞれの
- * プレースホルダは空文字になる。
+ * {{TEST_SECTIONS}} / {{DB_SECTIONS}} をモードと設定に応じて置換する。プレースホルダが
+ * なければそのまま返す(procedure.md による上書きで使う)。docs / tests / db が無効なら
+ * それぞれのプレースホルダは空文字になる。
  */
 export function renderProcedureTemplate(
 	template: string,
@@ -364,6 +398,9 @@ export function renderProcedureTemplate(
 			"{{TEST_SECTIONS}}",
 			options.tests === true ? TEST_SECTIONS_BY_LAYOUT[layout] : "",
 		);
+	}
+	if (options.db !== "placeholder") {
+		rendered = rendered.replaceAll("{{DB_SECTIONS}}", options.db === true ? DB_SECTIONS : "");
 	}
 	return rendered;
 }

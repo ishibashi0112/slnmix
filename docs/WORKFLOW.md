@@ -213,6 +213,28 @@ git で手動で戻したなど、本当に当て直したいときだけ `--for
 追記します。TS / JS 以外の言語は `include` を明示してください (`kind: "src"` の既定は
 `**/*.{ts,tsx,js,jsx,mjs,cjs,css,scss,json,html,md}`)。
 
+### 3-8. テスト用 DB の値を確かめる (ashiato、slnmix v0.21.0〜)
+
+AI に DB の値を推測させず、確認用の SELECT を書かせて手元で実行し、結果を貼ります。
+DB に接続するのは ashiato だけで、実行するのは SELECT だけです (1 文でも違えば 1 文も
+実行しません)。接続には SELECT だけを許可したユーザーを使い、テスト用 DB の値を
+チャットに貼ってよいかは社内の決まりに従ってください。
+
+0. 一回だけ: `npm install -g ashiato mssql oracledb` (使う DB のドライバーだけでよい) で
+   ashiato を入れる。グローバルに入れておくと、アプリのルートで `npx ashiato ...` が
+   そのまま動く。社内のレジストリに ashiato が無いときは、パッケージファイルから入れる
+   (ashiato の docs/trial-guide.ja.md の 2-2)
+1. 一回だけ: `npx ashiato schema --tables "<使うテーブル>"` でテーブル定義を
+   `docs/db/schema.md` に書き出す (接続先は `--db` か環境変数 `ASHIATO_DB_URL`)。
+   テーブルが変わったら打ち直す
+2. 以降の `npx slnmix` が「DB の確認: あり」と表示し、パックにテーブル定義を、
+   手順文に「DB の確認」の節を入れる
+3. AI は値の確認が要るとき、`checks/<名前>.sql` を changes.md で出し、回答の末尾に
+   `npx ashiato query checks/<名前>.sql` を書く。petari で当ててからそのコマンドを打つと、
+   結果 (文ごとの見出し・SQL・先頭 50 行) がクリップボードに入るので、チャットに貼る
+4. SELECT 以外が混ざっていると「Nothing was run」で何も実行せず、理由がクリップボードに
+   入る。そのままチャットに貼れば書き直してもらえる
+
 ## 4. コマンド早見表
 
 ```text
@@ -225,6 +247,9 @@ npx slnmix build                   MSBuild でビルドし、失敗ならエラ�
 npx slnmix init                    初回セットアップ (リポジトリ直下で。冪等。protocol.md の更新にも)
 npx slnmix --init-docs             docs/ 連携だけを設定する (init に含まれる)
 npx slnmix --init-config           VB.NET 以外向けの slnmix.config.json だけを作る (init に含まれる)
+
+npx ashiato schema --tables "A,B"   テスト用 DB のテーブル定義を docs/db/schema.md に書き出す (3-8)
+npx ashiato query checks/x.sql     AI が書いた SELECT を実行し、結果をコピー (3-8)
 
 npx petari watch                   起動したままにすると、届いた changes.md を確認なしで適用し続ける
 npx petari                         Downloads の changes.md を適用

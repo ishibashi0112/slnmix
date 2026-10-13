@@ -490,6 +490,27 @@ AI は変更した振る舞いに対応するテストを同じ changes.md に�
 (仕組みは [docs/HANDOFF-testing-2026-09.md](docs/HANDOFF-testing-2026-09.md))。
 **テストが無いプロジェクトでは手順文は従来と同一**で、AI にテストは求めません。
 
+### テスト用 DB の値を確かめる(v0.21.0〜)
+
+ルートに `docs/db/schema.md`(テスト用 DB のテーブル定義)があると、パックに
+`<db_schema>` として入れ、手順文の末尾に「DB の確認」の節を入れます(標準エラーに
+「DB の確認: あり」と出ます)。AI は DB の値が答えを左右するとき、推測せずに確認用の
+SELECT を `checks/<名前>.sql` として changes.md で出し、回答の末尾に実行コマンドを書きます。
+**slnmix は DB に接続しません。** テーブル定義の書き出しと SELECT の実行は別ツールの
+[ashiato](https://github.com/ishibashi0112/ashiato) が行います。
+
+```console
+npx ashiato schema --tables "受注*,顧客"     # 一回だけ: docs/db/schema.md を書く(行の値は含まない)
+npx ashiato query checks/受注合計.sql        # AI が書いた SELECT を実行し、結果をクリップボードへ
+```
+
+ashiato は `npm install -g ashiato mssql oracledb` のように、使う DB のドライバーと一緒に
+グローバルに入れておきます(アプリのルートで `npx ashiato` がそのまま動きます)。
+`ashiato query` が実行するのは SELECT / WITH だけで、書き込みやロックの語が 1 文でもあると
+1 文も実行しません。接続には SELECT だけを許可したユーザーを使い、結果(DB の値)を
+チャットに貼ってよいかは社内の決まりに従ってください(流れは
+[docs/WORKFLOW.md](docs/WORKFLOW.md) の 3-8)。
+
 ### 手順文のカスタマイズ(`procedure.md`)
 
 入力と同じフォルダに `procedure.md` があれば、内蔵既定文の代わりにその内容を
@@ -505,7 +526,8 @@ npx slnmix --print-procedure --mode plan                 # モード別の文面
 `procedure.md` の末尾に追記する運用を想定しています。別ファイルは増やしません。
 書き出した文面の末尾にある `{{DOCS_SECTIONS}}` は残しておくと、docs 連携(下記)が
 有効なときに「文書の扱い」「チャットの継続と引継ぎ」の 2 節に置換されます。同じく
-`{{TEST_SECTIONS}}` は自動テストがあるとき(上記)に「自動テスト」の節に置換されます。
+`{{TEST_SECTIONS}}` は自動テストがあるとき(上記)に「自動テスト」の節に、
+`{{DB_SECTIONS}}` は `docs/db/schema.md` があるとき(上記)に「DB の確認」の節に置換されます。
 `kind: "generic"` の場所で `--print-procedure` を実行すると、VB 固有の項目を外した
 generic 向けの文面が書き出されます(`{{LAYOUT:...}}` は置換済み)。
 
