@@ -4,7 +4,7 @@
 2 つのコマンドラインツール、slnmix と petari の導入審査用の資料です。
 どのデータがどこへ出るか、ツールが何をして何をしないかを、コードで確かめられる形でまとめます。
 
-- 対象: slnmix 0.22.0 / petari 0.12.0(2026-10-13 時点)
+- 対象: slnmix 0.22.1 / petari 0.13.0(2026-10-28 時点)
 - ソース: <https://github.com/ishibashi0112/slnmix> / <https://github.com/ishibashi0112/petari>
 - ライセンス: どちらも MIT
 
@@ -16,7 +16,7 @@
 | AI に渡るデータ | 利用者が自分でチャット画面に貼り付け・添付したものだけ。送り先は社内で承認済みのチャット AI で、ツールが新しい送り先を増やすことはない(§2, §4) |
 | AI の権限 | ない。AI は PC 上でコマンドを実行できず、ファイルにも直接触れない |
 | 書き込む範囲 | プロジェクトのフォルダの中だけ。slnmix は出力ファイルと初期設定を書き、petari は AI の変更を書く。petari は外へのパス・シンボリックリンク経由の書き込みを拒否する(§5, §7) |
-| 依存パッケージ | slnmix は 12 パッケージ(すべて MIT、インストールスクリプトなし)。petari は実行時依存ゼロ(§8) |
+| 依存パッケージ | slnmix は 12 パッケージ(すべて MIT、インストールスクリプトなし)。petari は実行時依存ゼロで、他者のコードの同梱もない(§8) |
 | 起動する外部コマンド | クリップボード・レジストリ参照・git などの OS コマンドと、利用者が `slnmix build` を実行したときの MSBuild だけ。いずれもシェルを通さない(§6) |
 
 ## 2. データの流れ
@@ -36,11 +36,9 @@ slnmix と petari は通信しません(§3)。AI が PC 上で何かを実行�
 
 - **slnmix**: ネットワークを扱うモジュール(http / https / net / tls / dgram / dns)と
   fetch を一切使っていません
-- **petari**: 外への通信はありません。唯一、差分表示(`petari show`)で VS Code が無い
-  とき(または `--browser` 指定時)に限り、ブラウザで差分を見るための HTTP サーバーを **127.0.0.1(自分の PC 内)の
-  空きポート**で一時的に開きます。URL に 128 ビットの乱数トークンが必要で、
-  Host / Origin の検証、CSP による外部リソースの遮断を行い、30 分操作がなければ止まります。
-  エディタ(Monaco Editor、Microsoft、MIT)はパッケージに同梱しており、CDN から読み込みません
+- **petari**: 外への通信も、ポートの待ち受けもありません。差分表示(`petari show`)で
+  VS Code が無いときは、JS を含まない HTML ファイルを書き出して既定のブラウザで開くだけです
+  (0.12.0 まであった、127.0.0.1 の一時サーバーと同梱エディタによるブラウザ編集は 0.13.0 で廃止)
 - **インストール時**: `npx slnmix` / `npx petari` は初回に npm レジストリ
   (registry.npmjs.org)からパッケージを取得します。社内レジストリ(ミラー)経由にする、
   または版数を固定して導入する方法は §8 を参照してください
@@ -51,8 +49,7 @@ slnmix と petari は通信しません(§3)。AI が PC 上で何かを実行�
 grep -rnE "from ['\"](node:)?(https?|net|tls|dgram|dns)['\"]|require\(['\"](https?|net|tls|dgram|dns)['\"]\)|fetch\(" slnmix/src petari/src
 ```
 
-slnmix は該当なし、petari は差分表示サーバー(`src/infra/diff-server.ts`)と
-そのページ内の自分自身への保存リクエストだけが出ます。
+どちらも該当なしです。
 
 ## 4. AI に渡るデータと、その制御
 
@@ -176,8 +173,8 @@ PowerShell の実行が制限されている環境では、クリップボード
 
 ## 8. 依存パッケージとサプライチェーン
 
-**petari** は実行時依存がゼロです(Node.js の標準機能だけで動く)。ブラウザ差分表示用の
-Monaco Editor はビルド時にパッケージへ同梱しています。
+**petari** は実行時依存がゼロです(Node.js の標準機能だけで動く)。他者のコードも同梱して
+いません(0.12.0 まで同梱していた Monaco Editor は 0.13.0 で削除。パッケージは展開後 約 0.3MB)。
 
 **slnmix** の実行時依存は次の 12 パッケージで、すべて MIT ライセンス、
 インストール時に実行されるスクリプト(preinstall / install / postinstall)はありません
@@ -188,18 +185,18 @@ Monaco Editor はビルド時にパッケージへ同梱しています。
 | fast-xml-parser 5.10.1(と依存の @nodable/entities, fast-xml-builder, is-unsafe, path-expression-matcher, strnum, anynum, xml-naming) | `.sln` / `.vbproj` の XML 解析 |
 | iconv-lite 0.7.3(と依存の safer-buffer) | Shift_JIS のソースの読み取り |
 | ignore 7.0.6 | `.gitignore` の判定 |
-| petari 0.11.0 以上 | `slnmix init` で petari の初期設定を呼ぶため |
+| petari 0.13.x | `slnmix init` で petari の初期設定を呼ぶため |
 
 npm の版数指定は範囲(`^`)のため、`npx` で都度取得すると依存の版がその時点の最新に
 なることがあります。審査した版で固定したい場合は、次のいずれかを推奨します。
 
 - 社内の npm レジストリ(ミラー)に審査済みの版だけを置き、そこから取得する
-- `npm install -g slnmix@0.20.0 petari@0.12.0` のように版数を指定して導入し、
+- `npm install -g slnmix@0.22.1 petari@0.13.0` のように版数を指定して導入し、
   更新は審査の上で行う(依存の版はインストールした時点で決まり、その後は変わりません)
 - ソースを取得して `pnpm install --frozen-lockfile` でロックファイルどおりに入れ、
   ビルドしたものを配布する
 
-公開パッケージの中身は `npm pack slnmix@0.20.0` / `npm pack petari@0.12.0` で
+公開パッケージの中身は `npm pack slnmix@0.22.1` / `npm pack petari@0.13.0` で
 取得して確認できます。
 
 ## 9. Claude Code / Codex などのエージェント型ツールとの違い
