@@ -4,7 +4,7 @@
 2 つのコマンドラインツール、slnmix と petari の導入審査用の資料です。
 どのデータがどこへ出るか、ツールが何をして何をしないかを、コードで確かめられる形でまとめます。
 
-- 対象: slnmix 0.22.1 / petari 0.13.0(2026-10-28 時点)
+- 対象: slnmix 0.22.1 / petari 0.13.1(2026-10-29 時点)
 - ソース: <https://github.com/ishibashi0112/slnmix> / <https://github.com/ishibashi0112/petari>
 - ライセンス: どちらも MIT
 
@@ -191,12 +191,12 @@ npm の版数指定は範囲(`^`)のため、`npx` で都度取得すると依�
 なることがあります。審査した版で固定したい場合は、次のいずれかを推奨します。
 
 - 社内の npm レジストリ(ミラー)に審査済みの版だけを置き、そこから取得する
-- `npm install -g slnmix@0.22.1 petari@0.13.0` のように版数を指定して導入し、
+- `npm install -g slnmix@0.22.1 petari@0.13.1` のように版数を指定して導入し、
   更新は審査の上で行う(依存の版はインストールした時点で決まり、その後は変わりません)
 - ソースを取得して `pnpm install --frozen-lockfile` でロックファイルどおりに入れ、
   ビルドしたものを配布する
 
-公開パッケージの中身は `npm pack slnmix@0.22.1` / `npm pack petari@0.13.0` で
+公開パッケージの中身は `npm pack slnmix@0.22.1` / `npm pack petari@0.13.1` で
 取得して確認できます。
 
 ## 9. Claude Code / Codex などのエージェント型ツールとの違い

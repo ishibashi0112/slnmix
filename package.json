@@ -33,7 +33,7 @@
 		"ai"
 	],
 	"scripts": {
-		"build": "tsc -p tsconfig.build.json",
+		"build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.build.json",
 		"check-types": "tsc --noEmit",
 		"compile-tests": "tsc -p . --outDir out",
 		"test": "npm run compile-tests && mocha \"out/test/**/*.test.js\" --ui tdd",
