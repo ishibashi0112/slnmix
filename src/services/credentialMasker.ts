@@ -128,6 +128,20 @@ const TOKEN_PATTERNS: ReadonlyArray<{ kind: string; regex: RegExp }> = [
 /** Bearer トークン(bearer という語は残しトークン部のみマスク) */
 const BEARER_TOKEN = /\b(bearer\s+)([A-Za-z0-9._~+/-]{16,}=*)/gi;
 
+/**
+ * 一部だけ伏せたトークンの残り。厳格モードでは高エントロピー値の判定がトークンの形式より
+ * 先に走るため、20 文字未満の部分(JWT の署名、Bearer トークンの「.」の後ろなど)が残る
+ * ことがある。伏せ字を含み、伏せていない英数字も残っているものを丸ごと伏せる
+ */
+const PARTIAL_JWT =
+	/(?:\beyJ[A-Za-z0-9_-]{8,}|\[MASKED\])(?:\.(?:[A-Za-z0-9_-]{8,}|\[MASKED\])){2}/g;
+const PARTIAL_BEARER = /\b(bearer\s+)((?:\[MASKED\]|[A-Za-z0-9._~+/-])+=*)/gi;
+
+/** 伏せ字を含み、伏せていない英数字も残っているか */
+function isPartlyMasked(token: string): boolean {
+	return token.includes(MASK) && /[A-Za-z0-9]/.test(token.split(MASK).join(""));
+}
+
 /** PRIVATE KEY ブロック(BEGIN/END 行は残し中身をマスク) */
 const PRIVATE_KEY_BLOCK =
 	/(-----BEGIN [A-Z ]*PRIVATE KEY-----)[\s\S]+?(-----END [A-Z ]*PRIVATE KEY-----)/g;
@@ -496,7 +510,14 @@ export function maskCredentials(content: string, options: MaskOptions): MaskResu
 			return `${prefix}${MASK}`;
 		},
 	);
+	result = result.replace(PARTIAL_JWT, (whole: string) => (isPartlyMasked(whole) ? MASK : whole));
+	result = result.replace(PARTIAL_BEARER, (whole: string, prefix: string, token: string) =>
+		isPartlyMasked(token) ? `${prefix}${MASK}` : whole,
+	);
 
+	// 大きい文字列を控えに残したままにしない
+	lineIndexText = undefined;
+	lineIndexBreaks = [];
 	return { content: result, findings };
 }
 
@@ -654,13 +675,15 @@ export interface MaskLinesOptions {
 
 /**
  * AI に渡す抜粋のための伏せた表示 (行の数と位置は元のまま)。
- * slnmix のパックが取り得るどの伏せ方 (.vb を VB として / 汎用テキストとして) でも伏せられる範囲を
+ * slnmix のパックが取り得るどの伏せ方 (.vb を VB として / 汎用テキストとして、strict の有無) でも伏せられる範囲を
  * すべて伏せる。伏せた範囲を元の位置に対応づけられない伏せ方があれば、空行以外をすべて伏せる (安全側)
  */
 export function maskLinesForDisplay(lines: string[], options: MaskLinesOptions): string[] {
 	const text = lines.join("\n");
 	const all: MaskSpan[] = [];
-	for (const mode of maskModes(options.path, [options.strict ?? true])) {
+	// 厳格モードの結果は厳格でない結果を含むとは限らない(トークンの形式の判定の順番など)ため、
+	// strict のときは両方の範囲を伏せる
+	for (const mode of maskModes(options.path, (options.strict ?? true) ? [true, false] : [false])) {
 		const spans = maskedSpans(text, mode);
 		if (spans === null) {
 			return lines.map((l) => (l.trim() === "" ? l : `${/^\s*/.exec(l)?.[0] ?? ""}${MASK}`));

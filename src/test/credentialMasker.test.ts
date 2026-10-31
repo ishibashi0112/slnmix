@@ -293,6 +293,28 @@ suite("credentialMasker: 高エントロピー値(厳格モード)", () => {
 });
 
 
+suite("credentialMasker: 一部だけ伏せたトークンの残り(厳格モード)", () => {
+	test("Bearer トークンの「.」の後ろの短い部分も伏せる", () => {
+		const vb = 'req.Headers.Add("Authorization", "Bearer Ab1Cd2Ef3Gh4Ij5Kl6Mn7Op8.sEcReTtAiLvAlUe")';
+		const result = maskCredentials(vb, VB);
+		assert.ok(!result.content.includes("sEcReTtAiLvAlUe"), result.content);
+		assert.ok(result.content.includes('"Bearer [MASKED]"'));
+	});
+
+	test("JWT の 20 文字未満の部分も伏せる", () => {
+		const jwt = "token: eyJhbGciOiJub25lIn0.eyJ1c2VyIjoiYWRtaW4iLCJyb2xlIjoiYWRtaW4ifQ.abcdefghijklmnop";
+		const result = maskCredentials(jwt, GENERIC);
+		assert.strictEqual(result.content, "token: [MASKED]");
+	});
+
+	test("すべて伏せた部分だけなら変えない", () => {
+		const jwt =
+			"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c";
+		assert.strictEqual(maskCredentials(jwt, GENERIC).content, "[MASKED].[MASKED].[MASKED]");
+		assert.strictEqual(maskCredentials("Use Bearer [MASKED].", GENERIC).content, "Use Bearer [MASKED].");
+	});
+});
+
 suite("credentialMasker: maskLinesForDisplay(行の位置を保つ抜粋用)", () => {
 	test("行数を変えずに伏せる", () => {
 		const lines = ['Dim pwd As String = "s3cret"', "Open(pwd)"];
@@ -354,6 +376,11 @@ suite("credentialMasker: maskLinesForDisplay(行の位置を保つ抜粋用)", (
 		const lines = ["Module M", "    Private Const pass = 48291375", "End Module"];
 		assert.ok(!maskCredentials(lines.join("\n"), GENERIC).content.includes("48291375"));
 		assert.ok(!maskLinesForDisplay(lines, { path: "M.vb" }).join("\n").includes("48291375"));
+	});
+
+	test("strict のときは厳格でない伏せ方の範囲も伏せる", () => {
+		const lines = ['h = "Bearer Ab1Cd2Ef3Gh4Ij5Kl6Mn7Op8.sEcReTtAiLvAlUe"'];
+		assert.ok(!maskLinesForDisplay(lines, { path: "a.txt" }).join("").includes("sEcReT"));
 	});
 
 	test("strict: false では高エントロピー値を伏せない(--no-strict-mask)", () => {
