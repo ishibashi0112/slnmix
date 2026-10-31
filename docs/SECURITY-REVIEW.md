@@ -83,11 +83,12 @@ Go の `:=` も)・C# の `@"..."` / `$"..."`・Python の `u"..."` / `f"..."` /
 VB の型文字つきの宣言(`Dim strPwd$ = "..."`)・URL の利用者情報のパスワード(`postgres://user:...@host`。`&amp;` / `&#x40;` などの文字参照・
 `${DB_PASSWORD:-既定値}` の既定値も)・
 バッチファイルの `set DB_PASSWORD=...`(`&` でつないだもの・`if` / `@` の後のもの・`set "..."` / `set \"...\"` のように引用符で囲んだもの・
-MSBuild の `Exec` やビルド後イベントに書いたものも。SQL の `UPDATE 表名 SET ...` と、値が列名に対応するバインド変数(`SET LOGIN_PASSWORD=:LOGIN_PASSWORD`・`?`)のものは除きます)・
+MSBuild の `Exec` やビルド後イベントに書いたものも。SQL の `UPDATE 表名 SET ...`(`THEN` / `DO` の後の `UPDATE SET` も)と、値がバインド変数(`:名前` / `@名前` / `?` など)で、名前がキーと同じ(`SET LOGIN_PASSWORD=:LOGIN_PASSWORD`)か、後ろに `,` / `WHERE` が続くか、同じ行か前の行に `UPDATE` があるものは除きます)・
 パスワードを引数で渡すコマンド(`sqlcmd` / `osql` / `bcp` の `-U` と一緒に渡す `-P`(コマンド名のない引数の文字列の `-U ユーザー -P ...` も)、
 `mysql` の `-p...` / `--password=`、`mysqladmin` の `password`、`net use` のパスワード(`/user:` の後に書いたものも)、`schtasks` の `/RP` / `/P`。
 行の継続(`^` / `\`)・MSBuild の `&quot;` で囲んだもの・VB の文字列の中のものも。`%SA_PASSWORD%` / `$Password` などの変数の参照・差し込み・
-入力を求める `*`・リダイレクトは除きます)・Dockerfile の `ENV` / `ARG`(行末の `\` で続く行も)・
+入力を求める `*`・リダイレクト・前後に空白のある `&` / `+` / `.` での文字列の連結・引用符で囲まない `/` `-` `*` `<` で始まる値・
+PostgreSQL のコマンド(`psql` / `createuser` / `pgbench` など)の `-P` は除きます)・Dockerfile の `ENV` / `ARG`(行末の `\` で続く行も)・
 docker compose の `- POSTGRES_PASSWORD=...`(引用符で囲んだものも)・`docker run -e DB_PASSWORD=...` も同じです
 (`.env` や compose の一覧の、引用符の外の行末の ` # コメント` は残します)。
 キーの末尾の番号(`Password2`・`DB_PASSWORD_2`・`SMTP_PASS1`)は除いて判定します(小文字の `pass1` / `pass2` だけのキー
@@ -104,8 +105,9 @@ ODBC の `Pwd={...}` のように波括弧で囲んだ値も、閉じた波括�
 (YAML の `password: ...` や INI の `db_password = ...` のような引用符のない値、C# の `DefaultSettingValue` 属性・複数行にわたる
 文字列の連結、`String.Concat(...)`、VB の文字列や XML リテラルの中に書いた JSON / XML、
 `serializeAs="Xml"` の設定値、PHP / Ruby の `'password' => '...'`、メソッドの引数の組(`props.put("password", "...")`)、
-PowerShell の `$env:DB_PASSWORD = "..."`、Dockerfile の空白で区切る古い形の `ENV DB_PASSWORD ...`、URL のパスワードの
-エンコードしていない `;` の後ろなど。統合で言語ごとに扱う予定。設計書 §25)。
+Dockerfile の空白で区切る古い形の `ENV DB_PASSWORD ...`、URL のパスワードの
+エンコードしていない `;` の後ろ、コマンドの引数の値を `\"...\"` / `""...""` のようにエスケープした引用符で囲んだもの、
+PowerShell の行の継続(`` ` ``)・`Invoke-Sqlcmd -Password`、`net.exe use`、`sqlcmd` の `/U` `/P` の形など。統合で言語ごとに扱う予定。設計書 §25)。
 
 パックのほかに AI に貼る文面も、同じ規則で伏せます(slnmix 0.22.2 / petari 0.14.0 から)。
 
