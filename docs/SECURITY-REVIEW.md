@@ -84,8 +84,10 @@ VB の型文字つきの宣言(`Dim strPwd$ = "..."`)・URL の利用者情報�
 `${DB_PASSWORD:-既定値}` の既定値も)・
 バッチファイルの `set DB_PASSWORD=...`(`&` でつないだもの・`if` / `@` の後のもの・`set "..."` / `set \"...\"` のように引用符で囲んだもの・
 MSBuild の `Exec` やビルド後イベントに書いたものも。SQL の `UPDATE 表名 SET ...` と、値が列名に対応するバインド変数(`SET LOGIN_PASSWORD=:LOGIN_PASSWORD`・`?`)のものは除きます)・
-パスワードを引数で渡すコマンド(`sqlcmd` / `osql` / `bcp` の `-P`、`mysql` の `-p`、`net use` のパスワード、`schtasks` の `/RP` / `/P`。
-`%SA_PASSWORD%` などの変数の参照・入力を求める `*` は除きます)・Dockerfile の `ENV` / `ARG`(行末の `\` で続く行も)・
+パスワードを引数で渡すコマンド(`sqlcmd` / `osql` / `bcp` の `-U` と一緒に渡す `-P`(コマンド名のない引数の文字列の `-U ユーザー -P ...` も)、
+`mysql` の `-p...` / `--password=`、`mysqladmin` の `password`、`net use` のパスワード(`/user:` の後に書いたものも)、`schtasks` の `/RP` / `/P`。
+行の継続(`^` / `\`)・MSBuild の `&quot;` で囲んだもの・VB の文字列の中のものも。`%SA_PASSWORD%` / `$Password` などの変数の参照・差し込み・
+入力を求める `*`・リダイレクトは除きます)・Dockerfile の `ENV` / `ARG`(行末の `\` で続く行も)・
 docker compose の `- POSTGRES_PASSWORD=...`(引用符で囲んだものも)・`docker run -e DB_PASSWORD=...` も同じです
 (`.env` や compose の一覧の、引用符の外の行末の ` # コメント` は残します)。
 キーの末尾の番号(`Password2`・`DB_PASSWORD_2`・`SMTP_PASS1`)は除いて判定します(小文字の `pass1` / `pass2` だけのキー
