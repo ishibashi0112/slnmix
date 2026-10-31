@@ -362,6 +362,49 @@ suite("buildErrorReport", () => {
 		);
 	});
 
+	test("予約語の引数名 ([Error]) の既定値も伏せる", () => {
+		const report = buildErrorReport(
+			[
+				{ origin: "C:\\src\\F.vb", line: 1, code: "BC30057", message: "Too many arguments to 'Public Sub Connect([[Error] As String = \"Hunter2Secret\"])'." },
+				{ origin: "C:\\src\\F.vb", line: 1, code: "BC30057", message: "Too many arguments to 'Public Sub M([ByRef [Date] As String = \"Kp7MoonPass\"])'." },
+			],
+			"",
+			{ rootDir: "C:\\src", readLines: () => ["Db.Connect(1, 2)"], mask: { strict: true } },
+		);
+		assert.ok(!report.includes("Hunter2Secret"), report);
+		assert.ok(!report.includes("Kp7MoonPass"), report);
+		assert.ok(report.includes("Too many arguments to 'Public Sub Connect([[Error] As String = \"[MASKED]\"])'."), report);
+	});
+
+	test("文の形の伏せた値 (ラベルの文言・SQL) の語で、本文のふつうの語を伏せない", () => {
+		const lines = [
+			"Public Class FrmLogin",
+			'    Sub ShowError()',
+			'        lblPasswordError.Text = "The password is not correct for this type of account"',
+			'        Dim sqlPassword As String = "select user_id from m_user where pwd = @p and del = 0"',
+			"    End Sub",
+			"",
+			"",
+			"",
+			"",
+			"",
+			"    Sub A()",
+			"        Dim x = Foo + 1",
+			"    End Sub",
+			"End Class",
+		];
+		const report = buildErrorReport(
+			[
+				{ origin: "C:\\src\\FrmLogin.vb", line: 12, code: "BC30452", message: "Operator '+' is not defined for types 'String' and 'Integer'." },
+				{ origin: "C:\\src\\FrmLogin.vb", line: 12, code: "BC30451", message: "'Foo' is not declared. It may be inaccessible due to its protection level." },
+			],
+			"",
+			{ rootDir: "C:\\src", readLines: () => lines, mask: { strict: true } },
+		);
+		assert.ok(report.includes("Operator '+' is not defined for types 'String' and 'Integer'."), report);
+		assert.ok(report.includes("'Foo' is not declared. It may be inaccessible due to its protection level."), report);
+	});
+
 	test("長い文字列の一部に同じ並びがあるだけなら、伏せた値は見えているとみなさない", () => {
 		const lines = [
 			"Module M",

@@ -233,29 +233,41 @@ function addCandidates(into: MessageCandidates, maskedValues: string[]): void {
  * パックに入るファイルの伏せた表示に見えている値・語を除く(パックでも見えているため。伏せすぎで
  * 本文が読めなくならないように)
  */
-function filterVisible(candidates: MessageCandidates, visibleTexts: string[]): string[] {
+function filterVisible(candidates: MessageCandidates, visibleTexts: string[]): { values: string[]; words: string[] } {
 	const visibleWords = new Set<string>();
 	const visibleTokens = new Set<string>();
 	for (const text of visibleTexts) {
 		for (const word of text.match(WORD) ?? []) visibleWords.add(word);
 		for (const token of text.split(TOKEN_BREAKS)) if (token !== "") visibleTokens.add(token);
 	}
-	const out = [...candidates.words].filter((w) => !visibleWords.has(w));
+	const words = [...candidates.words].filter((w) => !visibleWords.has(w));
+	const out: string[] = [];
 	for (const value of candidates.values) {
-		const words = value.match(WORD) ?? [];
+		const valueWords = value.match(WORD) ?? [];
 		// 1 語だけの値は語として見えているかで決まる
-		if (words.length === 1 && words[0] === value) {
+		if (valueWords.length === 1 && valueWords[0] === value) {
 			if (!visibleWords.has(value)) out.push(value);
 			continue;
 		}
 		// 値が見えているとみなすのは、区切り(空白・引用符・括弧・演算子など)で区切られたひとまとまりとして
 		// 見えているときだけ(長い文字列の一部に同じ並びがあるだけなら、値そのものは見えていない)。
 		// 見えていない語を含む値は、値そのものもまず見えていないので探さない
-		if (words.some((w) => !visibleWords.has(w)) || !isVisibleValue(value, visibleTokens, visibleTexts)) {
+		if (valueWords.some((w) => !visibleWords.has(w)) || !isVisibleValue(value, visibleTokens, visibleTexts)) {
 			out.push(value);
 		}
 	}
-	return out;
+	return { values: out, words };
+}
+
+/** 本文の引用('...' / "..." / 「...」など) */
+const QUOTED = /'[^'\n]*'|"(?:[^"\n]|"")*"|「[^」\n]*」|\u2018[^\u2019\n]*\u2019|\u201C[^\u201D\n]*\u201D/g;
+
+/**
+ * 伏せた値の中の語は、本文の引用の中でだけ伏せる(コンパイラーは識別子を引用して報告する。文の形の値
+ * (ラベルの文言・SQL など)の語で、本文の not / for / type などの語まで伏せないように)
+ */
+function maskWordsInQuotes(text: string, words: string[]): string {
+	return words.length === 0 ? text : text.replace(QUOTED, (quoted: string) => maskValues(quoted, words));
 }
 
 /** 値のひとまとまりの区切り(空白を除く) */
@@ -311,8 +323,11 @@ function maskAsVbSource(text: string, strict: boolean): { text: string; values: 
 	return pos === neutral.length && rebuilt === masked ? { text: out, values } : null;
 }
 
-/** シグネチャの省略可能な引数の文字列の既定値([key As String = "..."] / [string key = "..."]) */
-const SIGNATURE_DEFAULT = /(\[[^[\]"]*?=\s*)"((?:[^"]|"")+)"/g;
+/**
+ * シグネチャの省略可能な引数の文字列の既定値([key As String = "..."] / [string key = "..."])。
+ * 予約語の引数名は [] で囲まれる([[Error] As String = "..."])
+ */
+const SIGNATURE_DEFAULT = /(\[(?:[^[\]"]|\[[^[\]"]*\])*?=\s*)"((?:[^"]|"")+)"/g;
 
 function maskSignatureDefaults(text: string): { text: string; values: string[] } {
 	const values: string[] = [];
@@ -449,14 +464,15 @@ export function buildErrorReport(
 		if (own === null) {
 			// 伏せた位置を対応づけられないときは、' を空白にした本文をそのまま伏せる(安全側)
 			const neutral = maskSignatureDefaults(neutralizeVbComments(text)).text;
-			return maskCredentials(maskText(maskValues(neutral, messageMasks)), { vbSource: true, strict: mask.strict })
-				.content;
+			const masked = maskWordsInQuotes(maskValues(neutral, messageMasks.values), messageMasks.words);
+			return maskCredentials(maskText(masked), { vbSource: true, strict: mask.strict }).content;
 		}
 		// 省略可能な引数の既定値は、定数を参照していてもコンパイラーが値に置き換えて引用するため、名前に
 		// 関わらず伏せる
 		const defaults = maskSignatureDefaults(own.text);
 		const values = [...own.values, ...defaults.values].filter((v) => v.length >= MIN_MESSAGE_VALUE_LENGTH);
-		return maskText(maskValues(defaults.text, [...messageMasks, ...values]));
+		const masked = maskValues(defaults.text, [...messageMasks.values, ...values]);
+		return maskText(maskWordsInQuotes(masked, messageMasks.words));
 	};
 	shown.forEach((error, index) => {
 		const file = resolveErrorFile(error);
