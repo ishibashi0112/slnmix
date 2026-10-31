@@ -80,12 +80,14 @@ slnmix は `.sln` / `.vbproj`(Visual Studio のプロジェクト定義)を解�
 コードの `dbPassword = "..."`(型の注釈つきの `password: string = "..."` / `password:str="..."`・C# の自動プロパティの初期化子・
 Go の `:=` も)・C# の `@"..."` / `$"..."`・Python の `u"..."` / `f"..."` / `r'...'`・文字列の中の `Password=\"...\"`・リテラルをまたいで続く
 接続文字列の値・リソース(.resx)の `<data name="DbPassword">` の値・VB のコメントアウトした宣言(`' Dim strPwd As String = "..."`)・
-VB の型文字つきの宣言(`Dim strPwd$ = "..."`)・URL の利用者情報のパスワード(`postgres://user:...@host`。`&amp;` などの文字参照・
+VB の型文字つきの宣言(`Dim strPwd$ = "..."`)・URL の利用者情報のパスワード(`postgres://user:...@host`。`&amp;` / `&#x40;` などの文字参照・
 `${DB_PASSWORD:-既定値}` の既定値も)・
-バッチファイルの `set DB_PASSWORD=...`(`&` でつないだもの・`if` / `@` の後のもの・MSBuild の `Exec` やビルド後イベントに書いたものも。
-SQL の `UPDATE ... SET` は除きます)・Dockerfile の `ENV` / `ARG`(行末の `\` で続く行も)・
+バッチファイルの `set DB_PASSWORD=...`(`&` でつないだもの・`if` / `@` の後のもの・`set "..."` / `set \"...\"` のように引用符で囲んだもの・
+MSBuild の `Exec` やビルド後イベントに書いたものも。SQL の `UPDATE 表名 SET ...` と、値が列名に対応するバインド変数(`SET LOGIN_PASSWORD=:LOGIN_PASSWORD`・`?`)のものは除きます)・
+パスワードを引数で渡すコマンド(`sqlcmd` / `osql` / `bcp` の `-P`、`mysql` の `-p`、`net use` のパスワード、`schtasks` の `/RP` / `/P`。
+`%SA_PASSWORD%` などの変数の参照・入力を求める `*` は除きます)・Dockerfile の `ENV` / `ARG`(行末の `\` で続く行も)・
 docker compose の `- POSTGRES_PASSWORD=...`(引用符で囲んだものも)・`docker run -e DB_PASSWORD=...` も同じです
-(`.env` の引用符の外の行末の ` # コメント` は残します)。
+(`.env` や compose の一覧の、引用符の外の行末の ` # コメント` は残します)。
 キーの末尾の番号(`Password2`・`DB_PASSWORD_2`・`SMTP_PASS1`)は除いて判定します(小文字の `pass1` / `pass2` だけのキー
 (`this.pass1` / `self.pass1` も)はコードの処理の段のことが多いため秘密系とみなしません)。区切りのないキー
 (`DBPASSWORD`・`PGPASSWORD`・`sqlpwd`)も末尾の `password` などで判定します。
