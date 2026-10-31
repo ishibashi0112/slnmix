@@ -278,6 +278,52 @@ function isVisibleValue(value: string, visibleTokens: Set<string>, visibleTexts:
 	});
 }
 
+/**
+ * text を VB のソースとして伏せる。' で囲んだ引用をコメントとして読み飛ばさないよう、文字列の外の ' を
+ * 空白にしてから伏せ(文字の位置は変わらない)、伏せた範囲を元の text の同じ位置で伏せる。values は伏せた
+ * 元の値。対応づけられなければ null
+ */
+function maskAsVbSource(text: string, strict: boolean): { text: string; values: string[] } | null {
+	const neutral = neutralizeVbComments(text);
+	const masked = maskCredentials(neutral, { vbSource: true, strict }).content;
+	if (masked === neutral) return { text, values: [] };
+	const segments = masked.split(MASK_TOKEN);
+	const head = segments[0] ?? "";
+	if (!neutral.startsWith(head)) return null;
+	let out = text.slice(0, head.length);
+	let rebuilt = head;
+	let pos = head.length;
+	let tokens = 0;
+	const values: string[] = [];
+	for (let j = 1; j < segments.length; j++) {
+		const seg = segments[j] ?? "";
+		tokens += 1;
+		// 伏せ字が隣り合う: 境目は決められないので 1 つの範囲にまとめる
+		if (seg === "" && j < segments.length - 1) continue;
+		const end = j === segments.length - 1 ? neutral.length - seg.length : neutral.indexOf(seg, pos + 1);
+		if (end <= pos || neutral.slice(end, end + seg.length) !== seg) return null;
+		values.push(text.slice(pos, end));
+		out += MASK_TOKEN.repeat(tokens) + text.slice(end, end + seg.length);
+		rebuilt += MASK_TOKEN.repeat(tokens) + seg;
+		pos = end + seg.length;
+		tokens = 0;
+	}
+	return pos === neutral.length && rebuilt === masked ? { text: out, values } : null;
+}
+
+/** シグネチャの省略可能な引数の文字列の既定値([key As String = "..."] / [string key = "..."]) */
+const SIGNATURE_DEFAULT = /(\[[^[\]"]*?=\s*)"((?:[^"]|"")+)"/g;
+
+function maskSignatureDefaults(text: string): { text: string; values: string[] } {
+	const values: string[] = [];
+	const out = text.replace(SIGNATURE_DEFAULT, (whole: string, head: string, value: string) => {
+		if (value === MASK_TOKEN) return whole;
+		values.push(value);
+		return `${head}"${MASK_TOKEN}"`;
+	});
+	return { text: out, values };
+}
+
 /** 文字列の外の VB のコメントの始まりの文字(' ‘ ’)を空白にする(文字の位置は変えない) */
 function neutralizeVbComments(text: string): string {
 	let inString = false;
@@ -356,10 +402,9 @@ export function buildErrorReport(
 	// 同じファイルのエラーが続くことが多いので、伏せた行はファイルごとに 1 回だけ作る
 	const maskedFiles = new Map<string, string[] | undefined>();
 	// 抜粋で伏せた値。エラーの本文がその値を引用することがある(引用符を忘れた値が識別子として
-	// 報告されるなど)ため、本文からも伏せる。unknown = 対応づけられないファイルがあった
+	// 報告されるなど)ため、本文からも伏せる(対応づけられないファイルの値は、本文を VB のソースとして伏せる
+	// ことで補う)
 	const candidates: MessageCandidates = { values: new Set(), words: new Set() };
-	let unknown = false;
-	const visibleTexts: string[] = [];
 	const linesOf = (file: string): string[] | undefined => {
 		if (!maskedFiles.has(file)) {
 			const lines = options.readLines(file);
@@ -378,35 +423,40 @@ export function buildErrorReport(
 				lines === undefined || maskOptions === undefined ? lines : maskLinesForDisplay(lines, maskOptions);
 			if (lines !== undefined && maskOptions !== undefined) {
 				const values = maskedValuesForDisplay(lines, maskOptions);
-				if (values === null) unknown = true;
-				else addCandidates(candidates, values);
-				// パックから除外するファイルは AI に見えていないので、見えている語に数えない
-				if (shown !== undefined && options.excludedBy?.(file) === undefined) visibleTexts.push(shown.join("\n"));
+				if (values !== null) addCandidates(candidates, values);
 			}
 			maskedFiles.set(file, lines === undefined || shown === undefined ? undefined : compilerLines(file, lines, shown));
 		}
 		return maskedFiles.get(file);
 	};
 	const shown = errors.slice(0, maxErrors);
-	// 本文を伏せる前に、載せるエラーのファイルをすべて読んでおく
+	// 本文を伏せる前に、載せるエラーのファイルをすべて読んでおく。見えているとみなすのは、この文面に
+	// 載せる抜粋の行だけ(パックから除外するファイルの抜粋は載せない)
+	const visibleTexts: string[] = [];
 	for (const error of shown) {
 		const file = resolveErrorFile(error);
-		if (file !== undefined) linesOf(file);
+		const lines = file === undefined ? undefined : linesOf(file);
+		if (file === undefined || lines === undefined || error.line === undefined || error.line > lines.length) continue;
+		if (options.excludedBy?.(file) !== undefined) continue;
+		visibleTexts.push(lines.slice(Math.max(0, error.line - 1 - context), error.line + context).join("\n"));
 	}
 	const messageMasks = filterVisible(candidates, visibleTexts);
 	const maskMessage = (text: string): string => {
 		if (mask === undefined) return text;
 		// 本文そのものも VB のソースとして伏せる。コンパイラーはエラーのないファイルの宣言も引用する
-		// (省略可能な引数の既定値を含むシグネチャなど)。' で囲んだ引用をコメントとして読み飛ばさないよう、
-		// 文字列の外の ' を空白にしてから伏せる値を求め、元の本文で伏せる
-		const neutral = neutralizeVbComments(text);
-		const own = maskedValuesForDisplay([neutral], { path: "message.vb", strict: mask.strict, vbSource: true });
-		if (unknown || own === null) {
-			// どの値を伏せたか分からないときは、VB のソースとしての伏せ方をそのまま重ねる
+		// (省略可能な引数の既定値を含むシグネチャなど)
+		const own = maskAsVbSource(text, mask.strict);
+		if (own === null) {
+			// 伏せた位置を対応づけられないときは、' を空白にした本文をそのまま伏せる(安全側)
+			const neutral = maskSignatureDefaults(neutralizeVbComments(text)).text;
 			return maskCredentials(maskText(maskValues(neutral, messageMasks)), { vbSource: true, strict: mask.strict })
 				.content;
 		}
-		return maskText(maskValues(text, [...messageMasks, ...own]));
+		// 省略可能な引数の既定値は、定数を参照していてもコンパイラーが値に置き換えて引用するため、名前に
+		// 関わらず伏せる
+		const defaults = maskSignatureDefaults(own.text);
+		const values = [...own.values, ...defaults.values].filter((v) => v.length >= MIN_MESSAGE_VALUE_LENGTH);
+		return maskText(maskValues(defaults.text, [...messageMasks, ...values]));
 	};
 	shown.forEach((error, index) => {
 		const file = resolveErrorFile(error);

@@ -333,6 +333,35 @@ suite("buildErrorReport", () => {
 		assert.ok(report.includes("パラメーター 'server' に対して引数が指定されていません"), report);
 	});
 
+	test("定数を参照する既定値もコンパイラーが値に置き換えて引用するため、名前に関わらず伏せる", () => {
+		const report = buildErrorReport(
+			[
+				{
+					origin: "C:\\src\\Form1.vb",
+					line: 1,
+					code: "BC30455",
+					message:
+						"Argument not specified for parameter 'server' of 'Public Sub Connect(server As String, [key As String = \"k3yV4lu3\"])'.",
+				},
+				{
+					origin: "C:\\src\\Form1.vb",
+					line: 1,
+					code: "BC30455",
+					message: "Argument not specified for parameter 'id' of 'Public Sub M(id As Integer, [user As String = \"a\"], [n As Integer = 1])'.",
+				},
+			],
+			"",
+			{ rootDir: "C:\\src", readLines: () => ["Db.Connect()"], mask: { strict: true } },
+		);
+		assert.ok(!report.includes("k3yV4lu3"), report);
+		assert.ok(report.includes('[key As String = "[MASKED]"]'), report);
+		// 短い既定値はその位置だけ伏せる(本文のほかの語を伏せない)
+		assert.ok(
+			report.includes("Argument not specified for parameter 'id' of 'Public Sub M(id As Integer, [user As String = \"[MASKED]\"], [n As Integer = 1])'."),
+			report,
+		);
+	});
+
 	test("長い文字列の一部に同じ並びがあるだけなら、伏せた値は見えているとみなさない", () => {
 		const lines = [
 			"Module M",
