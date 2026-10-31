@@ -1,6 +1,6 @@
 {
 	"name": "slnmix",
-	"version": "0.22.0",
+	"version": "0.22.1",
 	"description": "Repomix 互換フォーマットで .sln / .vbproj を 1 ファイルにエクスポートする CLI。ディレクトリ走査ではなくソリューションの論理構成(Link・DependentUpon 解決済み)に基づく。レガシー VB.NET / Shift_JIS 対応。",
 	"license": "MIT",
 	"author": "Yuki Sakakibara",
@@ -33,7 +33,7 @@
 		"ai"
 	],
 	"scripts": {
-		"build": "tsc -p tsconfig.build.json",
+		"build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.build.json",
 		"check-types": "tsc --noEmit",
 		"compile-tests": "tsc -p . --outDir out",
 		"test": "npm run compile-tests && mocha \"out/test/**/*.test.js\" --ui tdd",
@@ -43,7 +43,7 @@
 		"fast-xml-parser": "^5.10.1",
 		"iconv-lite": "^0.7.3",
 		"ignore": "^7.0.6",
-		"petari": "^0.11.0"
+		"petari": "^0.13.1"
 	},
 	"devDependencies": {
 		"@types/mocha": "^10.0.10",
