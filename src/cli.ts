@@ -355,8 +355,9 @@ function runBuild(
 				: {}),
 			readLines: (absolutePath) => {
 				try {
-					// 行番号はコンパイラーと同じ数え方(単独の CR や Unicode の改行も 1 行)
-					const lines = decodeSourceBuffer(fs.readFileSync(absolutePath)).split(/\r\n|[\r\n\u0085\u2028\u2029]/);
+					// CRLF / LF で分ける(伏せる処理をパックと同じ区切りの文字列にかけるため)。単独の CR などは
+					// buildErrorReport がコンパイラーと同じ数え方で分ける
+					const lines = decodeSourceBuffer(fs.readFileSync(absolutePath)).split(/\r?\n/);
 					// 末尾の改行の後ろは行ではない
 					if (lines.length > 1 && lines[lines.length - 1] === "") {
 						lines.pop();

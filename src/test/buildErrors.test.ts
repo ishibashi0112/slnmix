@@ -212,6 +212,49 @@ suite("buildErrorReport", () => {
 		assert.ok(!excluded.includes("Hunter2Secret"), excluded);
 	});
 
+	test("本文が伏せた値の一部 (識別子) を引用しても伏せ、パックで見えている語は伏せない", () => {
+		const db = [
+			"Module Db",
+			"    Sub A()",
+			"        Dim pwd = Hunter2Secret.Trim()",
+			'        Me.txtPassword.Name = "txtPassword"',
+			'        Me.txtPassword.PasswordChar = "*"c',
+			'        Dim pwdOpen = "["',
+			"    End Sub",
+			"End Module",
+		];
+		const report = buildErrorReport(
+			[
+				{ origin: "C:\\src\\Db.vb", line: 3, code: "BC30451", message: "'Hunter2Secret' は宣言されていません。" },
+				{ origin: "C:\\src\\Db.vb", line: 4, code: "BC30260", message: "'txtPassword' は、class 'frmLogin' で既に宣言されています。" },
+				{
+					origin: "C:\\src\\Db.vb",
+					line: 6,
+					code: "BC30452",
+					message: "演算子 '&' は、型 'String' および 'Object[]' に対して定義されていません。",
+				},
+			],
+			"",
+			{ rootDir: "C:\\src", readLines: () => db, mask: { strict: true } },
+		);
+		assert.ok(!report.includes("Hunter2Secret"), report);
+		assert.ok(report.includes("'txtPassword' は、class 'frmLogin' で既に宣言されています。"), report);
+		assert.ok(report.includes("演算子 '&' は、型 'String' および 'Object[]' に対して定義されていません。"), report);
+	});
+
+	test("行はコンパイラーと同じく単独の CR も 1 行と数え、伏せ方はパックと同じ区切りで決める", () => {
+		// readLines は CRLF / LF で分けた行を返す。2 行目に単独の CR がある
+		const lines = ["Module M", "    ' old\r    Sub Main()", '        Dim dbPass As String = "Hunt\u2028er2"', "        Foo(", "    End Sub", "End Module"];
+		const report = buildErrorReport(
+			[{ origin: "C:\\p\\M.vb", line: 6, code: "BC30201", message: "式が必要です。" }],
+			"",
+			{ rootDir: "C:\\p", readLines: () => lines, mask: { strict: true } },
+		);
+		assert.ok(report.includes("> 6 │        Foo("), report);
+		assert.ok(!report.includes("Hunt"), report);
+		assert.ok(!report.includes("er2"), report);
+	});
+
 	test("maskValues は短い値で別の語の一部を伏せない", () => {
 		assert.strictEqual(maskValues("'sa' usage sa_x sa.", ["sa"]), "'[MASKED]' usage sa_x [MASKED].");
 		assert.strictEqual(maskValues("p@ss!", ["p@ss!"]), "[MASKED]");

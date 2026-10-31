@@ -110,7 +110,7 @@ export function displayPath(absolute: string, rootDir: string): string {
 
 export interface BuildErrorReportOptions {
 	rootDir: string;
-	/** ファイルの行(読めなければ undefined)。デコードは呼び出し側 */
+	/** ファイルの行(CRLF / LF で分けたもの。読めなければ undefined)。デコードは呼び出し側 */
 	readLines(absolutePath: string): string[] | undefined;
 	/** 載せるエラーの上限(先頭のエラーの連鎖で後続が増えることが多い) */
 	maxErrors?: number;
@@ -149,29 +149,104 @@ function renderExcerpt(lines: string[], target: number, context: number): string
 	return out;
 }
 
-const isWordChar = (ch: string | undefined): boolean => ch !== undefined && /[A-Za-z0-9_]/.test(ch);
+const WORD_CHAR = /[\p{L}\p{N}_]/u;
+const WORD = /[\p{L}\p{N}_]+/gu;
+const isWordChar = (ch: string | undefined): boolean => ch !== undefined && WORD_CHAR.test(ch);
+
+/** エラーの本文から伏せる値の最短の長さ(1〜2 文字の値で本文の記号や語を伏せないように) */
+const MIN_MESSAGE_VALUE_LENGTH = 3;
 
 /**
- * 文面の中の values を [MASKED] に伏せる(長いものから)。英数字で始まる・終わる値は、前後が英数字で
- * ない位置だけ(短い値が別の語の一部を伏せないように)
+ * 文面の中の values を [MASKED] に伏せる。一致はすべて元の文面で探してから置き換える(伏せ字の
+ * 中を伏せ直さない)。文字や数字で始まる・終わる値は、前後が文字・数字でない位置だけ(値が別の語の
+ * 一部を伏せないように)
  */
 export function maskValues(text: string, values: string[]): string {
-	let out = text;
-	for (const value of [...values].sort((a, b) => b.length - a.length)) {
-		let from = 0;
-		let result = "";
-		for (;;) {
-			const at = out.indexOf(value, from);
-			if (at < 0) break;
+	const ranges: Array<[number, number]> = [];
+	for (const value of values) {
+		if (value === "") continue;
+		const first = value[0];
+		const last = value[value.length - 1];
+		for (let at = text.indexOf(value); at >= 0; at = text.indexOf(value, at + 1)) {
 			const end = at + value.length;
 			const bounded =
-				(!isWordChar(value[0]) || !isWordChar(out[at - 1])) &&
-				(!isWordChar(value[value.length - 1]) || !isWordChar(out[end]));
-			result += out.slice(from, at) + (bounded ? MASK_TOKEN : value);
-			from = end;
+				(!isWordChar(first) || !isWordChar(text[at - 1])) && (!isWordChar(last) || !isWordChar(text[end]));
+			if (bounded) ranges.push([at, end]);
 		}
-		out = result + out.slice(from);
 	}
+	if (ranges.length === 0) return text;
+	ranges.sort((a, b) => a[0] - b[0] || b[1] - a[1]);
+	let out = "";
+	let pos = 0;
+	let open: [number, number] | undefined;
+	for (const range of ranges) {
+		if (open !== undefined && range[0] < open[1]) {
+			open[1] = Math.max(open[1], range[1]);
+			continue;
+		}
+		if (open !== undefined) {
+			out += text.slice(pos, open[0]) + MASK_TOKEN;
+			pos = open[1];
+		}
+		open = [range[0], range[1]];
+	}
+	if (open !== undefined) {
+		out += text.slice(pos, open[0]) + MASK_TOKEN;
+		pos = open[1];
+	}
+	return out + text.slice(pos);
+}
+
+/**
+ * エラーの本文から伏せる値: 抜粋で伏せた値と、その中の語(識別子として引用されることがあるため)。
+ * パックに入るファイルでは、伏せた表示のどこかに見えている値・語は除く(パックでも見えているため。
+ * 伏せすぎで本文が読めなくならないように)。対応づけられない伏せ方があれば null
+ */
+function messageValues(lines: string[], shown: string[] | undefined, file: string, strict: boolean): string[] | null {
+	const values = maskedValuesForDisplay(lines, { path: file, strict });
+	if (values === null) return null;
+	const visible = shown === undefined ? "" : shown.join("\n");
+	const visibleWords = new Set(visible.match(WORD) ?? []);
+	const out = new Set<string>();
+	for (const value of values) {
+		if (value.length >= MIN_MESSAGE_VALUE_LENGTH && !visible.includes(value)) out.add(value);
+		for (const word of value.match(WORD) ?? []) {
+			if (word.length >= MIN_MESSAGE_VALUE_LENGTH && !visibleWords.has(word)) out.add(word);
+		}
+	}
+	return [...out];
+}
+
+/** VB / C# のコンパイラーが改行として数える文字(CRLF / LF で分けた後に残るもの)。XML などは CR だけ */
+const CODE_LINE_BREAKS = /\r|\u0085|\u2028|\u2029/;
+const XML_LINE_BREAKS = /\r/;
+
+/**
+ * 伏せた行(CRLF / LF で分けた行。伏せる処理はパックと同じ区切りの文字列にかける)を、コンパイラーが
+ * 数える行に分ける。伏せた範囲が改行の文字を含んで分け方が変わる行は、その行を丸ごと伏せる
+ */
+function compilerLines(file: string, lines: string[], shown: string[]): string[] {
+	const breaks = /\.(vb|cs)$/i.test(file) ? CODE_LINE_BREAKS : XML_LINE_BREAKS;
+	const out: string[] = [];
+	lines.forEach((line, i) => {
+		const shownLine = shown[i] ?? "";
+		const parts = line.split(breaks);
+		if (parts.length === 1) {
+			out.push(shownLine);
+			return;
+		}
+		const shownParts = shownLine.split(breaks);
+		for (let k = 0; k < parts.length; k++) {
+			const part = parts[k] ?? "";
+			out.push(
+				shownParts.length === parts.length
+					? (shownParts[k] ?? "")
+					: part.trim() === ""
+						? part
+						: `${/^\s*/.exec(part)?.[0] ?? ""}${MASK_TOKEN}`,
+			);
+		}
+	});
 	return out;
 }
 
@@ -214,17 +289,18 @@ export function buildErrorReport(
 	const linesOf = (file: string): string[] | undefined => {
 		if (!maskedFiles.has(file)) {
 			const lines = options.readLines(file);
+			const shown =
+				lines === undefined || mask === undefined
+					? lines
+					: maskLinesForDisplay(lines, { path: file, strict: mask.strict });
 			if (lines !== undefined && mask !== undefined) {
-				const values = maskedValuesForDisplay(lines, { path: file, strict: mask.strict });
+				// パックから除外するファイルは AI に見えていないので、見えている値を除かない
+				const visible = options.excludedBy?.(file) === undefined ? shown : undefined;
+				const values = messageValues(lines, visible, file, mask.strict);
 				if (values === null) fileValues = null;
 				else for (const value of values) fileValues?.add(value);
 			}
-			maskedFiles.set(
-				file,
-				lines === undefined || mask === undefined
-					? lines
-					: maskLinesForDisplay(lines, { path: file, strict: mask.strict }),
-			);
+			maskedFiles.set(file, lines === undefined || shown === undefined ? undefined : compilerLines(file, lines, shown));
 		}
 		return maskedFiles.get(file);
 	};
@@ -241,7 +317,7 @@ export function buildErrorReport(
 			// どの値を伏せたか分からないファイルがあるときは、VB のソースとしての伏せ方も重ねる
 			return maskCredentials(maskText(text), { vbSource: true, strict: mask.strict }).content;
 		}
-		return maskValues(maskText(text), [...values]);
+		return maskText(maskValues(text, [...values]));
 	};
 	shown.forEach((error, index) => {
 		const file = resolveErrorFile(error);
