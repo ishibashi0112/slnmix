@@ -43,7 +43,7 @@
 		"fast-xml-parser": "^5.10.1",
 		"iconv-lite": "^0.7.3",
 		"ignore": "^7.0.6",
-		"petari": "^0.11.0"
+		"petari": "^0.13.1"
 	},
 	"devDependencies": {
 		"@types/mocha": "^10.0.10",
