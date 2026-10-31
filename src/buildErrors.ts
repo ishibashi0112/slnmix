@@ -122,6 +122,12 @@ export interface BuildErrorReportOptions {
 	 */
 	mask?: { strict: boolean };
 	/**
+	 * パックでこのファイルを汎用テキストとして伏せることがあるか(generic の追加ディレクトリの .vb)。
+	 * 省略時はあるものとして、.vb は VB / 汎用テキストの両方の伏せ方で伏せる。false の .vb は VB としてだけ
+	 * 伏せる(パックと同じ。汎用テキストの伏せ方は代入の右辺などのコードまで伏せるため)
+	 */
+	genericTextFor?(absolutePath: string): boolean;
+	/**
 	 * パックが除外するファイル (.gitignore / .repomixignore) なら、根拠の ignore ファイルを返す。
 	 * そのファイルの抜粋は載せない (認証情報を置くファイルを除外していることが多いため)
 	 */
@@ -149,28 +155,34 @@ function renderExcerpt(lines: string[], target: number, context: number): string
 	return out;
 }
 
-const WORD_CHAR = /[\p{L}\p{N}_]/u;
-const WORD = /[\p{L}\p{N}_]+/gu;
-const isWordChar = (ch: string | undefined): boolean => ch !== undefined && WORD_CHAR.test(ch);
+/** 語: ASCII の英数字の並び、または ASCII 以外の文字・数字の並び(日本語の文中の英数字の識別子も切り出す) */
+const WORD = /[A-Za-z0-9_]+|[^\x00-\x7F\s\p{P}\p{S}]+/gu;
+/** 語の種類(境界の判定用)。同じ種類の文字が隣にあれば、その位置は語の途中 */
+function charClass(ch: string | undefined): "ascii" | "other" | undefined {
+	if (ch === undefined) return undefined;
+	if (/[A-Za-z0-9_]/.test(ch)) return "ascii";
+	return /[^\x00-\x7F\s\p{P}\p{S}]/u.test(ch) ? "other" : undefined;
+}
 
 /** エラーの本文から伏せる値の最短の長さ(1〜2 文字の値で本文の記号や語を伏せないように) */
 const MIN_MESSAGE_VALUE_LENGTH = 3;
 
 /**
  * 文面の中の values を [MASKED] に伏せる。一致はすべて元の文面で探してから置き換える(伏せ字の
- * 中を伏せ直さない)。文字や数字で始まる・終わる値は、前後が文字・数字でない位置だけ(値が別の語の
- * 一部を伏せないように)
+ * 中を伏せ直さない)。値の端の文字と同じ種類の文字(ASCII の英数字 / それ以外の文字)が隣にある位置は
+ * 別の語の一部なので伏せない
  */
 export function maskValues(text: string, values: string[]): string {
 	const ranges: Array<[number, number]> = [];
 	for (const value of values) {
 		if (value === "") continue;
-		const first = value[0];
-		const last = value[value.length - 1];
+		const first = charClass(value[0]);
+		const last = charClass(value[value.length - 1]);
 		for (let at = text.indexOf(value); at >= 0; at = text.indexOf(value, at + 1)) {
 			const end = at + value.length;
 			const bounded =
-				(!isWordChar(first) || !isWordChar(text[at - 1])) && (!isWordChar(last) || !isWordChar(text[end]));
+				(first === undefined || charClass(text[at - 1]) !== first) &&
+				(last === undefined || charClass(text[end]) !== last);
 			if (bounded) ranges.push([at, end]);
 		}
 	}
@@ -198,23 +210,37 @@ export function maskValues(text: string, values: string[]): string {
 }
 
 /**
- * エラーの本文から伏せる値: 抜粋で伏せた値と、その中の語(識別子として引用されることがあるため)。
- * パックに入るファイルでは、伏せた表示のどこかに見えている値・語は除く(パックでも見えているため。
- * 伏せすぎで本文が読めなくならないように)。対応づけられない伏せ方があれば null
+ * エラーの本文から伏せる値の候補: 抜粋で伏せた値(3 文字以上)と、その中の語(3 文字以上。識別子として
+ * 引用されることがあるため)。見えている値・語を除くのは、載せるエラーのファイルがそろってから
+ * (filterVisible)
  */
-function messageValues(lines: string[], shown: string[] | undefined, file: string, strict: boolean): string[] | null {
-	const values = maskedValuesForDisplay(lines, { path: file, strict });
-	if (values === null) return null;
-	const visible = shown === undefined ? "" : shown.join("\n");
-	const visibleWords = new Set(visible.match(WORD) ?? []);
-	const out = new Set<string>();
-	for (const value of values) {
-		if (value.length >= MIN_MESSAGE_VALUE_LENGTH && !visible.includes(value)) out.add(value);
-		for (const word of value.match(WORD) ?? []) {
-			if (word.length >= MIN_MESSAGE_VALUE_LENGTH && !visibleWords.has(word)) out.add(word);
-		}
+interface MessageCandidates {
+	values: Set<string>;
+	words: Set<string>;
+}
+
+function addCandidates(into: MessageCandidates, maskedValues: string[]): void {
+	for (const value of maskedValues) {
+		const words = (value.match(WORD) ?? []).filter((w) => w.length >= MIN_MESSAGE_VALUE_LENGTH);
+		for (const word of words) into.words.add(word);
+		// 3 文字以上の語を含む値は語の側で伏せる。語を含まない値(記号まじりの短い値など)だけ値ごと伏せる
+		if (value.length >= MIN_MESSAGE_VALUE_LENGTH && words.length === 0) into.values.add(value);
 	}
-	return [...out];
+}
+
+/**
+ * パックに入るファイルの伏せた表示に見えている値・語を除く(パックでも見えているため。伏せすぎで
+ * 本文が読めなくならないように)
+ */
+function filterVisible(candidates: MessageCandidates, visibleTexts: string[]): string[] {
+	const visibleWords = new Set<string>();
+	for (const text of visibleTexts) for (const word of text.match(WORD) ?? []) visibleWords.add(word);
+	const out = [...candidates.words].filter((w) => !visibleWords.has(w));
+	// 値ごと伏せる候補は記号まじりの短いものだけなので、見えているかは文字列で確かめる
+	for (const value of candidates.values) {
+		if (!visibleTexts.some((t) => t.includes(value))) out.push(value);
+	}
+	return out;
 }
 
 /** VB / C# のコンパイラーが改行として数える文字(CRLF / LF で分けた後に残るもの)。XML などは CR だけ */
@@ -284,21 +310,29 @@ export function buildErrorReport(
 	// 同じファイルのエラーが続くことが多いので、伏せた行はファイルごとに 1 回だけ作る
 	const maskedFiles = new Map<string, string[] | undefined>();
 	// 抜粋で伏せた値。エラーの本文がその値を引用することがある(引用符を忘れた値が識別子として
-	// 報告されるなど)ため、本文からも伏せる。null = 対応づけられないファイルがあった
-	let fileValues: Set<string> | null = new Set<string>();
+	// 報告されるなど)ため、本文からも伏せる。unknown = 対応づけられないファイルがあった
+	const candidates: MessageCandidates = { values: new Set(), words: new Set() };
+	let unknown = false;
+	const visibleTexts: string[] = [];
 	const linesOf = (file: string): string[] | undefined => {
 		if (!maskedFiles.has(file)) {
 			const lines = options.readLines(file);
+			const vbSource =
+				/\.vb$/i.test(file) && options.genericTextFor !== undefined && !options.genericTextFor(file)
+					? true
+					: undefined;
+			const maskOptions =
+				mask === undefined
+					? undefined
+					: { path: file, strict: mask.strict, ...(vbSource !== undefined ? { vbSource } : {}) };
 			const shown =
-				lines === undefined || mask === undefined
-					? lines
-					: maskLinesForDisplay(lines, { path: file, strict: mask.strict });
-			if (lines !== undefined && mask !== undefined) {
-				// パックから除外するファイルは AI に見えていないので、見えている値を除かない
-				const visible = options.excludedBy?.(file) === undefined ? shown : undefined;
-				const values = messageValues(lines, visible, file, mask.strict);
-				if (values === null) fileValues = null;
-				else for (const value of values) fileValues?.add(value);
+				lines === undefined || maskOptions === undefined ? lines : maskLinesForDisplay(lines, maskOptions);
+			if (lines !== undefined && maskOptions !== undefined) {
+				const values = maskedValuesForDisplay(lines, maskOptions);
+				if (values === null) unknown = true;
+				else addCandidates(candidates, values);
+				// パックから除外するファイルは AI に見えていないので、見えている語に数えない
+				if (shown !== undefined && options.excludedBy?.(file) === undefined) visibleTexts.push(shown.join("\n"));
 			}
 			maskedFiles.set(file, lines === undefined || shown === undefined ? undefined : compilerLines(file, lines, shown));
 		}
@@ -310,14 +344,14 @@ export function buildErrorReport(
 		const file = resolveErrorFile(error);
 		if (file !== undefined) linesOf(file);
 	}
+	const messageMasks = filterVisible(candidates, visibleTexts);
 	const maskMessage = (text: string): string => {
 		if (mask === undefined) return text;
-		const values = fileValues;
-		if (values === null) {
+		if (unknown) {
 			// どの値を伏せたか分からないファイルがあるときは、VB のソースとしての伏せ方も重ねる
-			return maskCredentials(maskText(text), { vbSource: true, strict: mask.strict }).content;
+			return maskCredentials(maskText(maskValues(text, messageMasks)), { vbSource: true, strict: mask.strict }).content;
 		}
-		return maskText(maskValues(text, [...values]));
+		return maskText(maskValues(text, messageMasks));
 	};
 	shown.forEach((error, index) => {
 		const file = resolveErrorFile(error);

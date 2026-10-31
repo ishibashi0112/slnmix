@@ -255,6 +255,52 @@ suite("buildErrorReport", () => {
 		assert.ok(!report.includes("er2"), report);
 	});
 
+	test("ほかのファイルで見えている語は、伏せた値の中の語でも本文から伏せない", () => {
+		const files: Record<string, string[]> = {
+			"C:\\src\\FrmLogin.Designer.vb": ["Partial Class FrmLogin", '    Me.lblUser.Text = "UserName"', "End Class"],
+			"C:\\src\\LoginService.vb": ["Module LoginService", "    Function Ok(u As Account) As Boolean", '        Return u.UserName <> ""', "    End Function", "End Module"],
+		};
+		const report = buildErrorReport(
+			[
+				{ origin: "C:\\src\\FrmLogin.Designer.vb", line: 2, code: "BC30002", message: "型 'X' が定義されていません。" },
+				{ origin: "C:\\src\\LoginService.vb", line: 3, code: "BC30456", message: "'UserName' は 'Account' のメンバーではありません。" },
+			],
+			"",
+			{ rootDir: "C:\\src", readLines: (p) => files[p], mask: { strict: true } },
+		);
+		assert.ok(report.includes("'UserName' は 'Account' のメンバーではありません。"), report);
+	});
+
+	test("generic の追加ディレクトリでない .vb は、パックと同じく VB のソースとしてだけ伏せる", () => {
+		const lines = ["Module M", "    Sub A()", "        user.Password = txtPasword.Text", "    End Sub", "End Module"];
+		const error = { origin: "C:\\src\\M.vb", line: 3, code: "BC30451", message: "'txtPasword' は宣言されていません。" };
+		const asPack = buildErrorReport([error], "", {
+			rootDir: "C:\\src",
+			readLines: () => lines,
+			mask: { strict: true },
+			genericTextFor: () => false,
+		});
+		assert.ok(asPack.includes("> 3 │        user.Password = txtPasword.Text"), asPack);
+		assert.ok(asPack.includes("'txtPasword' は宣言されていません。"), asPack);
+		const generic = buildErrorReport([error], "", {
+			rootDir: "C:\\src",
+			readLines: () => lines,
+			mask: { strict: true },
+			genericTextFor: () => true,
+		});
+		assert.ok(!generic.includes("txtPasword"), generic);
+	});
+
+	test("本文の日本語に続く引用でも伏せる", () => {
+		const lines = ["Module M", "    Dim pwd = Hunter2Secret", "End Module"];
+		const report = buildErrorReport(
+			[{ origin: "C:\\src\\M.vb", line: 2, code: "BC30451", message: "Hunter2Secretは宣言されていません。" }],
+			"",
+			{ rootDir: "C:\\src", readLines: () => lines, mask: { strict: true } },
+		);
+		assert.ok(!report.includes("Hunter2Secret"), report);
+	});
+
 	test("maskValues は短い値で別の語の一部を伏せない", () => {
 		assert.strictEqual(maskValues("'sa' usage sa_x sa.", ["sa"]), "'[MASKED]' usage sa_x [MASKED].");
 		assert.strictEqual(maskValues("p@ss!", ["p@ss!"]), "[MASKED]");

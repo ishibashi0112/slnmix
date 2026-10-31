@@ -353,6 +353,17 @@ function runBuild(
 						})(),
 					}
 				: {}),
+			// パックは generic の追加ディレクトリのファイルだけを汎用テキストとして伏せる(.vb も)
+			genericTextFor: (() => {
+				const roots = loadSlnmixConfig(rootDir, { readTextFile: readSourceTextFile }).config.extraRoots.map((r) =>
+					path.resolve(rootDir, r.path),
+				);
+				return (absolutePath: string) =>
+					roots.some((root) => {
+						const relative = path.relative(root, path.resolve(absolutePath));
+						return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+					});
+			})(),
 			readLines: (absolutePath) => {
 				try {
 					// CRLF / LF で分ける(伏せる処理をパックと同じ区切りの文字列にかけるため)。単独の CR などは
