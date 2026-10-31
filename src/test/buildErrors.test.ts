@@ -124,6 +124,46 @@ suite("buildErrorReport", () => {
 		assert.ok(report.includes("エラーの行を取り出せませんでした"));
 		assert.ok(report.includes("```\n何かが失敗した\n```"));
 	});
+
+	test("mask 指定時は抜粋・本文・ログの末尾の認証情報を伏せる(行番号は変えない)", () => {
+		const db = [
+			"Module Db",
+			"    Sub Connect()",
+			'        Dim pwd As String = "Hunter2Secret"',
+			'        Dim conn = "Server=db1;Password=p@ss;"',
+			"        Opn(pwd)",
+			"    End Sub",
+			"End Module",
+		];
+		const read = (p: string): string[] | undefined => (p === "C:\\src\\Db.vb" ? db : undefined);
+		const report = buildErrorReport(
+			[{ origin: "C:\\src\\Db.vb", line: 5, code: "BC30451", message: "'Opn' は宣言されていません。Password=p@ss" }],
+			"",
+			{ rootDir: "C:\\src", readLines: read, contextLines: 2, mask: { strict: true } },
+		);
+		assert.ok(!report.includes("Hunter2Secret"), report);
+		assert.ok(!report.includes("p@ss"), report);
+		assert.ok(report.includes('  3 │        Dim pwd As String = "[MASKED]"'), report);
+		assert.ok(report.includes(">5 │        Opn(pwd)") || report.includes("> 5 │        Opn(pwd)"), report);
+		assert.ok(report.includes("[MASKED] はそのまま残し"));
+
+		const tail = buildErrorReport([], "Password=p@ss の接続に失敗\n", {
+			rootDir: "C:\\src",
+			readLines: read,
+			mask: { strict: true },
+		});
+		assert.ok(!tail.includes("p@ss"), tail);
+	});
+
+	test("mask 省略時(--no-mask)は伏せない", () => {
+		const report = buildErrorReport(
+			[{ origin: "C:\\src\\App\\A.vb", line: 6, code: "BC1", message: "Password=p@ss" }],
+			"",
+			{ rootDir: "C:\\src", readLines },
+		);
+		assert.ok(report.includes("Password=p@ss"));
+		assert.ok(!report.includes("[MASKED] はそのまま残し"));
+	});
 });
 
 suite("locateMsbuild", () => {

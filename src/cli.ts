@@ -160,6 +160,8 @@ const USAGE = `slnmix — .sln / .vbproj の論理構成に基づく repomix 互
       --configuration <name>
                         /p:Configuration に渡す構成(既定: ソリューションの既定)
       --no-clip         エラーの文面をクリップボードではなく標準出力へ出す
+      --no-mask / --no-strict-mask
+                        パックと同じく、抜粋の認証情報の伏せ字を止める
   -v, --version         バージョン表示
   -h, --help            このヘルプ
 
@@ -269,7 +271,12 @@ const BUILD_LOG_TAIL_LINES = 40;
 function runBuild(
 	targetPath: string,
 	rootDir: string,
-	options: { msbuild: string | undefined; configuration: string | undefined; clip: boolean },
+	options: {
+		msbuild: string | undefined;
+		configuration: string | undefined;
+		clip: boolean;
+		mask: { strict: boolean } | undefined;
+	},
 ): number {
 	const located = locateMsbuild(options.msbuild, {
 		platform: process.platform,
@@ -309,6 +316,7 @@ function runBuild(
 		}
 		const report = buildErrorReport(errors, log.split(/\r?\n/).slice(-BUILD_LOG_TAIL_LINES).join("\n"), {
 			rootDir,
+			...(options.mask !== undefined ? { mask: options.mask } : {}),
 			readLines: (absolutePath) => {
 				try {
 					const lines = decodeSourceBuffer(fs.readFileSync(absolutePath)).split(/\r?\n/);
@@ -689,6 +697,7 @@ function main(): number {
 			msbuild: values.msbuild,
 			configuration: values.configuration,
 			clip: !values["no-clip"],
+			mask: values["no-mask"] ? undefined : { strict: !values["no-strict-mask"] },
 		});
 	}
 

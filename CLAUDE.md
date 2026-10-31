@@ -47,7 +47,8 @@ workbench は 2026-09 時点で凍結(新機能は追わない)。
 - `src/buildErrors.ts` / `src/msbuildRunner.ts` — `slnmix build`(設計書 §22、v0.20.0)。
   対象(パックと同じ決め方)を MSBuild でビルドし、失敗したらファイルロガー(ErrorsOnly・
   UTF-8)のログから標準のエラー形式を取り出して、今のファイルの周辺行(`│` 区切り。
-  petari の失敗レポートと同じ書式)付きの文面をクリップボードへ入れる。MSBuild の場所は
+  petari の失敗レポートと同じ書式)付きの文面をクリップボードへ入れる。抜粋・本文・ログの末尾は
+  パックと同じ規則で伏せる(v0.22.2。行の位置を保つ `maskLines`。--no-mask / --no-strict-mask が効く)。MSBuild の場所は
   --msbuild > vswhere > MSBuild 14.0 / 12.0 > .NET Framework 4(実在するものだけ。
   deps 注入で単体テスト)。起動自体は自動テストなし
 - `src/dbChecks.ts` — AI チャットだけでの DB 確認・動作検証(設計書 §23・§24、v0.21.0 / v0.22.0)。

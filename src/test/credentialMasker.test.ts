@@ -5,7 +5,7 @@
  */
 
 import * as assert from "assert";
-import { maskCredentials } from "../services/credentialMasker";
+import { maskCredentials, maskLines } from "../services/credentialMasker";
 
 const VB = { vbSource: true };
 const GENERIC = { vbSource: false };
@@ -292,3 +292,20 @@ suite("credentialMasker: 高エントロピー値(厳格モード)", () => {
 	});
 });
 
+
+suite("credentialMasker: maskLines(行の位置を保つ)", () => {
+	test("行数を変えずに伏せる", () => {
+		const lines = ['Dim pwd As String = "s3cret"', "Open(pwd)"];
+		assert.deepStrictEqual(maskLines(lines, VB), ['Dim pwd As String = "[MASKED]"', "Open(pwd)"]);
+	});
+
+	test("秘密鍵のブロックは本文を 1 行ずつ伏せる(行数は変えない)", () => {
+		const body = "MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7";
+		const lines = ["-----BEGIN PRIVATE KEY-----", body, body, "-----END PRIVATE KEY-----", "x = 1"];
+		const masked = maskLines(lines, GENERIC);
+		assert.strictEqual(masked.length, lines.length);
+		assert.strictEqual(masked[0], lines[0]);
+		assert.strictEqual(masked[4], "x = 1");
+		assert.ok(!masked.join("\n").includes(body));
+	});
+});

@@ -473,3 +473,37 @@ export function maskCredentials(content: string, options: MaskOptions): MaskResu
 
 	return { content: result, findings };
 }
+
+/** 秘密鍵ブロックの本文を 1 行ずつ伏せる(行数を変えない) */
+function maskPrivateKeyBodies(lines: string[]): string[] {
+	let inKey = false;
+	return lines.map((line) => {
+		if (/-----BEGIN [A-Z ]*PRIVATE KEY-----/.test(line)) {
+			inKey = !/-----END [A-Z ]*PRIVATE KEY-----/.test(line);
+			return line;
+		}
+		if (inKey) {
+			if (/-----END [A-Z ]*PRIVATE KEY-----/.test(line)) {
+				inKey = false;
+				return line;
+			}
+			return line.trim() === "" ? line : MASK;
+		}
+		return line;
+	});
+}
+
+/**
+ * 行配列を伏せる(行数と行の位置は元のまま。行番号付きの抜粋用)。
+ * maskCredentials は秘密鍵のブロックを 1 行にまとめ、複数行にまたがる属性値でも行数が
+ * 変わるため、秘密鍵の本文を先に 1 行ずつ伏せ、それでも行数が変わるときは行ごとに伏せる。
+ * petari の src/core/mask.ts の maskedLines と同じ処理(統合で 1 つに戻す。設計書 §25)
+ */
+export function maskLines(lines: string[], options: MaskOptions): string[] {
+	const keyMasked = maskPrivateKeyBodies(lines);
+	const whole = maskCredentials(keyMasked.join("\n"), options).content.split("\n");
+	if (whole.length === lines.length) {
+		return whole;
+	}
+	return keyMasked.map((line) => maskCredentials(line, options).content);
+}

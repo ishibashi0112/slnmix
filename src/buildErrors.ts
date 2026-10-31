@@ -6,9 +6,12 @@
  * 修正を頼める文面にする。各エラーには今の実ファイルの周辺行を付ける
  * (パックを作った後に petari で書き換わっていることが多く、AI が古い内容で
  * SEARCH を書くと petari の適用に失敗するため)。
+ * 抜粋・エラーの本文・ログの末尾は、パックと同じ規則で認証情報らしき値を [MASKED] に伏せる
+ * (この文面も AI に貼るため。v0.22.2)。
  */
 
 import * as path from "path";
+import { maskCredentials, maskLines } from "./services/credentialMasker";
 
 export interface BuildError {
 	/** ファイルのパス(MSBuild が出したまま)、またはツール名(vbc / MSBUILD 等) */
@@ -112,6 +115,11 @@ export interface BuildErrorReportOptions {
 	maxErrors?: number;
 	/** エラー行の前後に付ける行数 */
 	contextLines?: number;
+	/**
+	 * 認証情報らしき値を [MASKED] に伏せる(パックと同じ規則。strict は高エントロピー値も)。
+	 * 省略時は伏せない(--no-mask)
+	 */
+	mask?: { strict: boolean };
 }
 
 const DEFAULT_MAX_ERRORS = 20;
@@ -146,6 +154,9 @@ export function buildErrorReport(
 ): string {
 	const maxErrors = options.maxErrors ?? DEFAULT_MAX_ERRORS;
 	const context = options.contextLines ?? DEFAULT_CONTEXT_LINES;
+	const mask = options.mask;
+	const maskText = (text: string): string =>
+		mask === undefined ? text : maskCredentials(text, { vbSource: false, strict: mask.strict }).content;
 	const parts: string[] = [
 		"## ビルドエラー",
 		"",
@@ -155,9 +166,12 @@ export function buildErrorReport(
 		"- 抜粋は今の実ファイルの内容です。パックの内容と食い違うときは、抜粋が正です",
 		"- SEARCH には抜粋の「│」より右側をそのままコピーしてください(行頭の > と行番号は含めません)",
 		"- 先頭のエラーが原因で後続のエラーが出ていることがあります。先頭から確かめてください",
+		...(mask === undefined
+			? []
+			: ["- 認証情報らしき値は [MASKED] に伏せています。[MASKED] はそのまま残し、値を推測しないでください"]),
 	];
 	if (errors.length === 0) {
-		parts.push("", "エラーの行を取り出せませんでした。ビルドのログの末尾を載せます。", "", "```", logTail.trimEnd(), "```");
+		parts.push("", "エラーの行を取り出せませんでした。ビルドのログの末尾を載せます。", "", "```", maskText(logTail.trimEnd()), "```");
 		return parts.join("\n") + "\n";
 	}
 	const shown = errors.slice(0, maxErrors);
@@ -167,7 +181,7 @@ export function buildErrorReport(
 			file === undefined
 				? error.origin
 				: `${displayPath(file, options.rootDir)}${error.line !== undefined ? `:${error.line}` : ""}`;
-		parts.push("", `### ${index + 1}. ${where} — ${error.code}`, error.message);
+		parts.push("", `### ${index + 1}. ${where} — ${error.code}`, maskText(error.message));
 		if (file === undefined || error.line === undefined) {
 			return;
 		}
@@ -176,7 +190,9 @@ export function buildErrorReport(
 			parts.push("", "(ファイルを読めなかったため抜粋はありません)");
 			return;
 		}
-		parts.push("", "```" + fenceLanguage(file), ...renderExcerpt(lines, error.line, context), "```");
+		const shownLines =
+			mask === undefined ? lines : maskLines(lines, { vbSource: /\.vb$/i.test(file), strict: mask.strict });
+		parts.push("", "```" + fenceLanguage(file), ...renderExcerpt(shownLines, error.line, context), "```");
 	});
 	if (errors.length > shown.length) {
 		parts.push("", `(ほかに ${errors.length - shown.length} 件のエラーは省略しました)`);
