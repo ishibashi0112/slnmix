@@ -6,6 +6,7 @@ import * as assert from "assert";
 import {
 	buildErrorReport,
 	displayPath,
+	maskValues,
 	parseMsbuildErrors,
 	resolveErrorFile,
 	type BuildError,
@@ -194,6 +195,26 @@ suite("buildErrorReport", () => {
 		);
 		assert.ok(!report.includes("Hunter2Pw"), report);
 		assert.ok(report.includes("パックから除外しているファイルのため"), report);
+	});
+
+	test("抜粋で伏せた値は、エラーの本文の引用からも伏せる", () => {
+		const db = ["Module Db", "    Sub A()", "        Dim pwd = Hunter2Secret", "    End Sub", "End Module"];
+		const error = { origin: "C:\\src\\Db.vb", line: 3, code: "BC30451", message: "'Hunter2Secret' は宣言されていません。" };
+		const report = buildErrorReport([error], "", { rootDir: "C:\\src", readLines: () => db, mask: { strict: true } });
+		assert.ok(!report.includes("Hunter2Secret"), report);
+		assert.ok(report.includes("'[MASKED]' は宣言されていません。"), report);
+		const excluded = buildErrorReport([error], "", {
+			rootDir: "C:\\src",
+			readLines: () => db,
+			mask: { strict: true },
+			excludedBy: () => "C:\\src\\.gitignore",
+		});
+		assert.ok(!excluded.includes("Hunter2Secret"), excluded);
+	});
+
+	test("maskValues は短い値で別の語の一部を伏せない", () => {
+		assert.strictEqual(maskValues("'sa' usage sa_x sa.", ["sa"]), "'[MASKED]' usage sa_x [MASKED].");
+		assert.strictEqual(maskValues("p@ss!", ["p@ss!"]), "[MASKED]");
 	});
 
 	test("同じファイルのエラーが続いても、ファイルは 1 回だけ読んで伏せる", () => {

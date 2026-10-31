@@ -355,7 +355,8 @@ function runBuild(
 				: {}),
 			readLines: (absolutePath) => {
 				try {
-					const lines = decodeSourceBuffer(fs.readFileSync(absolutePath)).split(/\r?\n/);
+					// 行番号はコンパイラーと同じ数え方(単独の CR や Unicode の改行も 1 行)
+					const lines = decodeSourceBuffer(fs.readFileSync(absolutePath)).split(/\r\n|[\r\n\u0085\u2028\u2029]/);
 					// 末尾の改行の後ろは行ではない
 					if (lines.length > 1 && lines[lines.length - 1] === "") {
 						lines.pop();

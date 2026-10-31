@@ -134,7 +134,7 @@ const BEARER_TOKEN = /\b(bearer\s+)([A-Za-z0-9._~+/-]{16,}=*)/gi;
  * ことがある。伏せ字を含み、伏せていない英数字も残っているものを丸ごと伏せる
  */
 const PARTIAL_JWT =
-	/(?:\beyJ[A-Za-z0-9_-]{8,}|\[MASKED\])(?:\.(?:[A-Za-z0-9_-]{8,}|\[MASKED\])){2}/g;
+	/(?:\beyJ[A-Za-z0-9_-]{8,}|\[MASKED\])\.(?:eyJ[A-Za-z0-9_-]{8,}|\[MASKED\])\.(?:[A-Za-z0-9_-]{8,}|\[MASKED\])/g;
 const PARTIAL_BEARER = /\b(bearer\s+)((?:\[MASKED\]|[A-Za-z0-9._~+/-])+=*)/gi;
 
 /** 伏せ字を含み、伏せていない英数字も残っているか */
@@ -678,17 +678,43 @@ export interface MaskLinesOptions {
  * slnmix のパックが取り得るどの伏せ方 (.vb を VB として / 汎用テキストとして、strict の有無) でも伏せられる範囲を
  * すべて伏せる。伏せた範囲を元の位置に対応づけられない伏せ方があれば、空行以外をすべて伏せる (安全側)
  */
-export function maskLinesForDisplay(lines: string[], options: MaskLinesOptions): string[] {
-	const text = lines.join("\n");
+/** 抜粋で伏せる範囲 (どの伏せ方でも伏せる範囲を合わせたもの)。対応づけられない伏せ方があれば null */
+function displaySpans(text: string, options: MaskLinesOptions): MaskSpan[] | null {
 	const all: MaskSpan[] = [];
 	// 厳格モードの結果は厳格でない結果を含むとは限らない(トークンの形式の判定の順番など)ため、
 	// strict のときは両方の範囲を伏せる
 	for (const mode of maskModes(options.path, (options.strict ?? true) ? [true, false] : [false])) {
 		const spans = maskedSpans(text, mode);
-		if (spans === null) {
-			return lines.map((l) => (l.trim() === "" ? l : `${/^\s*/.exec(l)?.[0] ?? ""}${MASK}`));
-		}
-		all.push(...spans);
+		if (spans === null) return null;
+		// 伏せた範囲が多いファイル (大きな埋め込み画像など) で引数の上限を超えないよう 1 つずつ足す
+		for (const span of spans) all.push(span);
 	}
-	return linesFromSpans(lines, text, mergeSpans(all)).map((l) => l.text);
+	return mergeSpans(all);
+}
+
+export function maskLinesForDisplay(lines: string[], options: MaskLinesOptions): string[] {
+	const text = lines.join("\n");
+	const spans = displaySpans(text, options);
+	if (spans === null) {
+		return lines.map((l) => (l.trim() === "" ? l : `${/^\s*/.exec(l)?.[0] ?? ""}${MASK}`));
+	}
+	return linesFromSpans(lines, text, spans).map((l) => l.text);
+}
+
+/**
+ * 抜粋 (maskLinesForDisplay) で伏せる元の値 (行ごとに分け、前後の空白を除き、重複なし)。抜粋の外の
+ * 文面 (ビルドエラーの本文など) に同じ値が出たときに伏せるため。対応づけられない伏せ方があれば null
+ */
+export function maskedValuesForDisplay(lines: string[], options: MaskLinesOptions): string[] | null {
+	const text = lines.join("\n");
+	const spans = displaySpans(text, options);
+	if (spans === null) return null;
+	const values = new Set<string>();
+	for (const span of spans) {
+		for (const part of text.slice(span.start, span.end).split("\n")) {
+			const value = part.trim();
+			if (value !== "" && value !== MASK) values.add(value);
+		}
+	}
+	return [...values];
 }

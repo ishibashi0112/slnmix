@@ -52,7 +52,9 @@ workbench は 2026-09 時点で凍結(新機能は追わない)。
   抜粋は `maskLinesForDisplay`(credentialMasker.ts。ファイル全体を伏せた結果を元の位置に対応づけて
   行ごとに当てはめる。行ごとに伏せると複数行の値が漏れ、行数だけ揃えると行がずれるため。.vb は VB /
   汎用テキストの両方の伏せ方の範囲を伏せる。petari の core/mask.ts と同じコード)で、ファイルごとに
-  1 回だけ作る。パックが .gitignore / .repomixignore で除外するファイルの抜粋は載せない
+  1 回だけ作る。エラーの本文は、抜粋で伏せた値(`maskedValuesForDisplay`)の引用も伏せる(引用符を
+  忘れた値が識別子として報告されるなど)。行はコンパイラーと同じく単独の CR も 1 行と数える。
+  パックが .gitignore / .repomixignore で除外するファイルの抜粋は載せない
   (--no-gitignore で載せる)。MSBuild の場所は
   --msbuild > vswhere > MSBuild 14.0 / 12.0 > .NET Framework 4(実在するものだけ。
   deps 注入で単体テスト)。起動自体は自動テストなし

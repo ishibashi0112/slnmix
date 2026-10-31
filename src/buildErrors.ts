@@ -12,7 +12,7 @@
  */
 
 import * as path from "path";
-import { maskCredentials, maskLinesForDisplay } from "./services/credentialMasker";
+import { MASK_TOKEN, maskCredentials, maskLinesForDisplay, maskedValuesForDisplay } from "./services/credentialMasker";
 
 export interface BuildError {
 	/** ファイルのパス(MSBuild が出したまま)、またはツール名(vbc / MSBUILD 等) */
@@ -149,6 +149,32 @@ function renderExcerpt(lines: string[], target: number, context: number): string
 	return out;
 }
 
+const isWordChar = (ch: string | undefined): boolean => ch !== undefined && /[A-Za-z0-9_]/.test(ch);
+
+/**
+ * 文面の中の values を [MASKED] に伏せる(長いものから)。英数字で始まる・終わる値は、前後が英数字で
+ * ない位置だけ(短い値が別の語の一部を伏せないように)
+ */
+export function maskValues(text: string, values: string[]): string {
+	let out = text;
+	for (const value of [...values].sort((a, b) => b.length - a.length)) {
+		let from = 0;
+		let result = "";
+		for (;;) {
+			const at = out.indexOf(value, from);
+			if (at < 0) break;
+			const end = at + value.length;
+			const bounded =
+				(!isWordChar(value[0]) || !isWordChar(out[at - 1])) &&
+				(!isWordChar(value[value.length - 1]) || !isWordChar(out[end]));
+			result += out.slice(from, at) + (bounded ? MASK_TOKEN : value);
+			from = end;
+		}
+		out = result + out.slice(from);
+	}
+	return out;
+}
+
 /**
  * Copilot Chat に貼る文面。エラーが 1 件も取り出せなかったときは
  * ログの末尾をそのまま載せる(MSBuild 自体が動かなかった等)
@@ -182,9 +208,17 @@ export function buildErrorReport(
 	}
 	// 同じファイルのエラーが続くことが多いので、伏せた行はファイルごとに 1 回だけ作る
 	const maskedFiles = new Map<string, string[] | undefined>();
+	// 抜粋で伏せた値。エラーの本文がその値を引用することがある(引用符を忘れた値が識別子として
+	// 報告されるなど)ため、本文からも伏せる。null = 対応づけられないファイルがあった
+	let fileValues: Set<string> | null = new Set<string>();
 	const linesOf = (file: string): string[] | undefined => {
 		if (!maskedFiles.has(file)) {
 			const lines = options.readLines(file);
+			if (lines !== undefined && mask !== undefined) {
+				const values = maskedValuesForDisplay(lines, { path: file, strict: mask.strict });
+				if (values === null) fileValues = null;
+				else for (const value of values) fileValues?.add(value);
+			}
 			maskedFiles.set(
 				file,
 				lines === undefined || mask === undefined
@@ -195,6 +229,20 @@ export function buildErrorReport(
 		return maskedFiles.get(file);
 	};
 	const shown = errors.slice(0, maxErrors);
+	// 本文を伏せる前に、載せるエラーのファイルをすべて読んでおく
+	for (const error of shown) {
+		const file = resolveErrorFile(error);
+		if (file !== undefined) linesOf(file);
+	}
+	const maskMessage = (text: string): string => {
+		if (mask === undefined) return text;
+		const values = fileValues;
+		if (values === null) {
+			// どの値を伏せたか分からないファイルがあるときは、VB のソースとしての伏せ方も重ねる
+			return maskCredentials(maskText(text), { vbSource: true, strict: mask.strict }).content;
+		}
+		return maskValues(maskText(text), [...values]);
+	};
 	shown.forEach((error, index) => {
 		const file = resolveErrorFile(error);
 		const lines = file === undefined ? undefined : linesOf(file);
@@ -204,7 +252,7 @@ export function buildErrorReport(
 				: `${displayPath(file, options.rootDir)}${error.line !== undefined ? `:${error.line}` : ""}`;
 		// 読めるファイルのパスはそのまま。ファイルでない発生元(パスに見える接続文字列など)は伏せる
 		const where = lines === undefined ? maskText(located) : located;
-		parts.push("", `### ${index + 1}. ${where} — ${error.code}`, maskText(error.message));
+		parts.push("", `### ${index + 1}. ${where} — ${error.code}`, maskMessage(error.message));
 		if (file === undefined || error.line === undefined) {
 			return;
 		}

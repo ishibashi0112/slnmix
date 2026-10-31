@@ -5,7 +5,7 @@
  */
 
 import * as assert from "assert";
-import { maskCredentials, maskLinesForDisplay } from "../services/credentialMasker";
+import { maskCredentials, maskLinesForDisplay, maskedValuesForDisplay } from "../services/credentialMasker";
 
 const VB = { vbSource: true };
 const GENERIC = { vbSource: false };
@@ -313,6 +313,19 @@ suite("credentialMasker: 一部だけ伏せたトークンの残り(厳格モー
 		assert.strictEqual(maskCredentials(jwt, GENERIC).content, "[MASKED].[MASKED].[MASKED]");
 		assert.strictEqual(maskCredentials("Use Bearer [MASKED].", GENERIC).content, "Use Bearer [MASKED].");
 	});
+
+	test("JWT の形でないドット区切りの語は伏せすぎない", () => {
+		const url = "https://k7Qx9Pz2Lm4Vb8Nc3Rt.execute-api.ap-northeast-1.amazonaws.com";
+		assert.strictEqual(
+			maskCredentials(url, { ...GENERIC, strict: true }).content,
+			"https:[MASKED].execute-api.ap-northeast-1.amazonaws.com",
+		);
+		assert.strictEqual(
+			maskCredentials("AKIAIOSFODNN7EXAMPLE.something.whatever", GENERIC).content,
+			"[MASKED].something.whatever",
+		);
+		assert.strictEqual(maskCredentials("x = [MASKED].Resource1.Designer", GENERIC).content, "x = [MASKED].Resource1.Designer");
+	});
 });
 
 suite("credentialMasker: maskLinesForDisplay(行の位置を保つ抜粋用)", () => {
@@ -376,6 +389,23 @@ suite("credentialMasker: maskLinesForDisplay(行の位置を保つ抜粋用)", (
 		const lines = ["Module M", "    Private Const pass = 48291375", "End Module"];
 		assert.ok(!maskCredentials(lines.join("\n"), GENERIC).content.includes("48291375"));
 		assert.ok(!maskLinesForDisplay(lines, { path: "M.vb" }).join("\n").includes("48291375"));
+	});
+
+	test("伏せる範囲が非常に多いファイルでも止まらない", function () {
+		this.timeout(20000);
+		const lines: string[] = [];
+		for (let i = 0; i < 150000; i++) lines.push(`password=p${i}`);
+		const shown = maskLinesForDisplay(lines, { path: "a.txt", strict: false });
+		assert.strictEqual(shown.length, lines.length);
+		assert.strictEqual(shown[149999], "password=[MASKED]");
+	});
+
+	test("maskedValuesForDisplay は抜粋で伏せる元の値を返す", () => {
+		const lines = ['Dim pwd As String = "s3cret"', "x = 1", "pwd = Hunter2Secret"];
+		const values = maskedValuesForDisplay(lines, { path: "a.vb" });
+		assert.ok(values !== null);
+		assert.ok(values.includes("s3cret"), JSON.stringify(values));
+		assert.ok(values.includes("Hunter2Secret"), JSON.stringify(values));
 	});
 
 	test("strict のときは厳格でない伏せ方の範囲も伏せる", () => {
