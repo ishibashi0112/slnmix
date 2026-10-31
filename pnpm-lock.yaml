@@ -18,8 +18,8 @@ importers:
         specifier: ^7.0.6
         version: 7.0.6
       petari:
-        specifier: ^0.13.1
-        version: 0.13.1
+        specifier: ^0.14.0
+        version: 0.14.0
     devDependencies:
       '@types/mocha':
         specifier: ^10.0.10
@@ -272,8 +272,8 @@ packages:
     resolution: {integrity: sha512-Xa4Nw17FS9ApQFJ9umLiJS4orGjm7ZzwUrwamcGQuHSzDyth9boKDaycYdDcZDuqYATXw4HFXgaqWTctW/v1HA==}
     engines: {node: '>=16 || 14 >=14.18'}
 
-  petari@0.13.1:
-    resolution: {integrity: sha512-Ea11KpGzXpT1iL7tMLOgo4EgUW4eZ4/zJj+z5gODglkRr20YmwmYu6NnnfQ92yYp7y+qTKepG6YhXIdNjhYgXw==}
+  petari@0.14.0:
+    resolution: {integrity: sha512-AYoFHkyEIrt8dt7IYOOc/xGZO13+TdrVZhHlJI0n1UlHs9aQSSIBHQVgHBs3s/NtNRMVv7IFSjNhTxILEk8Ikw==}
     engines: {node: '>=20.19.0'}
     hasBin: true
 
@@ -617,7 +617,7 @@ snapshots:
       lru-cache: 10.4.3
       minipass: 7.1.3
 
-  petari@0.13.1: {}
+  petari@0.14.0: {}
 
   picocolors@1.1.1: {}
 
