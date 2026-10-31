@@ -259,15 +259,25 @@ function filterVisible(candidates: MessageCandidates, visibleTexts: string[]): {
 	return { values: out, words };
 }
 
-/** 本文の引用('...' / "..." / 「...」など) */
-const QUOTED = /'[^'\n]*'|"(?:[^"\n]|"")*"|「[^」\n]*」|\u2018[^\u2019\n]*\u2019|\u201C[^\u201D\n]*\u201D/g;
+/** 本文の引用('...' / "..." / 「...」/ ‘...’ / “...” / „...“ / «...» など) */
+const QUOTED =
+	/'[^'\n]*'|"(?:[^"\n]|"")*"|「[^」\n]*」|\u2018[^\u2019\n]*\u2019|\u201C[^\u201D\n]*\u201D|\u201E[^\u201C\u201D\n]*[\u201C\u201D]|\u201A[^\u2018\u2019\n]*[\u2018\u2019]|\u00AB[^\u00BB\n]*\u00BB/g;
+
+/** 識別子・秘密らしい語(英字と数字の両方を含むか、小文字の後に大文字が続く)。文の中のふつうの語ではない */
+function isTokenLike(word: string): boolean {
+	return (/[0-9]/.test(word) && /[A-Za-z]/.test(word)) || /[a-z][A-Z]/.test(word);
+}
 
 /**
- * 伏せた値の中の語は、本文の引用の中でだけ伏せる(コンパイラーは識別子を引用して報告する。文の形の値
- * (ラベルの文言・SQL など)の語で、本文の not / for / type などの語まで伏せないように)
+ * 伏せた値の中の語を伏せる。識別子・秘密らしい語はどこにあっても、それ以外の語は本文の引用の中でだけ
+ * 伏せる(コンパイラーは識別子を引用して報告するが、引用符の形は言語によって違い、引用符を付けずに
+ * 報告することもある。文の形の値(ラベルの文言・SQL など)の語で、本文の not / for / type などの語まで
+ * 伏せないように)
  */
-function maskWordsInQuotes(text: string, words: string[]): string {
-	return words.length === 0 ? text : text.replace(QUOTED, (quoted: string) => maskValues(quoted, words));
+function maskValueWords(text: string, words: string[]): string {
+	if (words.length === 0) return text;
+	const inQuotes = text.replace(QUOTED, (quoted: string) => maskValues(quoted, words));
+	return maskValues(inQuotes, words.filter(isTokenLike));
 }
 
 /** 値のひとまとまりの区切り(空白を除く) */
@@ -462,9 +472,10 @@ export function buildErrorReport(
 		// (省略可能な引数の既定値を含むシグネチャなど)
 		const own = maskAsVbSource(text, mask.strict);
 		if (own === null) {
-			// 伏せた位置を対応づけられないときは、' を空白にした本文をそのまま伏せる(安全側)
+			// 伏せた位置を対応づけられないときは、' を空白にした本文をそのまま伏せる(安全側。' の引用は
+			// 空白になっているため、値の中の語は引用の外でも伏せる)
 			const neutral = maskSignatureDefaults(neutralizeVbComments(text)).text;
-			const masked = maskWordsInQuotes(maskValues(neutral, messageMasks.values), messageMasks.words);
+			const masked = maskValues(neutral, [...messageMasks.values, ...messageMasks.words]);
 			return maskCredentials(maskText(masked), { vbSource: true, strict: mask.strict }).content;
 		}
 		// 省略可能な引数の既定値は、定数を参照していてもコンパイラーが値に置き換えて引用するため、名前に
@@ -472,7 +483,7 @@ export function buildErrorReport(
 		const defaults = maskSignatureDefaults(own.text);
 		const values = [...own.values, ...defaults.values].filter((v) => v.length >= MIN_MESSAGE_VALUE_LENGTH);
 		const masked = maskValues(defaults.text, [...messageMasks.values, ...values]);
-		return maskText(maskWordsInQuotes(masked, messageMasks.words));
+		return maskText(maskValueWords(masked, messageMasks.words));
 	};
 	shown.forEach((error, index) => {
 		const file = resolveErrorFile(error);

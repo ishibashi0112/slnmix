@@ -405,6 +405,28 @@ suite("buildErrorReport", () => {
 		assert.ok(report.includes("'Foo' is not declared. It may be inaccessible due to its protection level."), report);
 	});
 
+	test("伏せた値の中の識別子らしい語は、引用符の形によらず本文から伏せる", () => {
+		const lines = ["Module Db", "    Sub A()", "        Dim pwd = Hunter2Secret.Trim()", "    End Sub", "End Module"];
+		const messages = [
+			// ' を含む語で引用の組がずれる(フランス語)
+			"'string' ne contient pas de définition pour 'Hunter2Secret' et aucune méthode d'extension accessible 'Hunter2Secret' n'a été trouvée",
+			// ドイツ語の引用符
+			"„Hunter2Secret“ ist nicht deklariert.",
+			// 引用符なし
+			"Hunter2Secretは宣言されていません。",
+			// 伏せた位置を対応づけられない本文(' を空白にして伏せる)
+			"'Hunter2Secret' is not declared. -----BEGIN RSA PRIVATE KEY-----abc-----END RSA PRIVATE KEY-----",
+		];
+		for (const message of messages) {
+			const report = buildErrorReport([{ origin: "C:\\src\\Db.vb", line: 3, code: "BC30451", message }], "", {
+				rootDir: "C:\\src",
+				readLines: () => lines,
+				mask: { strict: true },
+			});
+			assert.ok(!report.includes("Hunter2Secret"), report);
+		}
+	});
+
 	test("長い文字列の一部に同じ並びがあるだけなら、伏せた値は見えているとみなさない", () => {
 		const lines = [
 			"Module M",

@@ -23,7 +23,9 @@ DependentUpon 解決済み)に基づいてエクスポートします。
 - 文字コードを自動判定(BOM / UTF-8 / Shift_JIS(CP932))して UTF-8 に統一
 - 認証情報らしき値(`Password=` / APIキー等)を既定で `[MASKED]` に自動置換
   (`パスワード` / `ﾊﾟｽﾜｰﾄﾞ` 等の日本語変数名・キー名、メソッド引数
-  `Login("...", "...")`、UI サマリー生成前の Designer ソースにも適用)
+  `Login("...", "...")`、UI サマリー生成前の Designer ソースにも適用)。
+  設定ファイルの appSettings(`<add key="DbPassword" value="..." />`)・My.Settings・
+  JSON の `"password": "..."`・`DB_PASSWORD=...` の値も伏せる(v0.22.2〜)
 - 既定で厳格モード: ランダムな英数字列(高エントロピー値)も機械的にマスク
   (`--no-strict-mask` で無効化)。出力ヘッダーには AI 向けに
   「[MASKED] は伏せ字」であることと取り扱いの指示を明記。`slnmix build` のエラーの
