@@ -6,9 +6,13 @@
  * 修正を頼める文面にする。各エラーには今の実ファイルの周辺行を付ける
  * (パックを作った後に petari で書き換わっていることが多く、AI が古い内容で
  * SEARCH を書くと petari の適用に失敗するため)。
+ * 抜粋・エラーの本文・ログの末尾・ファイルとして読めないエラーの発生元は、パックと同じ規則で
+ * 認証情報らしき値を [MASKED] に伏せる (この文面も AI に貼るため。v0.22.2)。抜粋はファイル全体を
+ * 伏せてから切り出し (行の位置は元のまま)、パックが .gitignore で除外するファイルの抜粋は載せない。
  */
 
 import * as path from "path";
+import { MASK_TOKEN, maskCredentials, maskLinesForDisplay, maskedValuesForDisplay } from "./services/credentialMasker";
 
 export interface BuildError {
 	/** ファイルのパス(MSBuild が出したまま)、またはツール名(vbc / MSBUILD 等) */
@@ -106,12 +110,28 @@ export function displayPath(absolute: string, rootDir: string): string {
 
 export interface BuildErrorReportOptions {
 	rootDir: string;
-	/** ファイルの行(読めなければ undefined)。デコードは呼び出し側 */
+	/** ファイルの行(CRLF / LF で分けたもの。読めなければ undefined)。デコードは呼び出し側 */
 	readLines(absolutePath: string): string[] | undefined;
 	/** 載せるエラーの上限(先頭のエラーの連鎖で後続が増えることが多い) */
 	maxErrors?: number;
 	/** エラー行の前後に付ける行数 */
 	contextLines?: number;
+	/**
+	 * 認証情報らしき値を [MASKED] に伏せる(パックと同じ規則。strict は高エントロピー値も)。
+	 * 省略時は伏せない(--no-mask)
+	 */
+	mask?: { strict: boolean };
+	/**
+	 * パックでこのファイルを汎用テキストとして伏せることがあるか(generic の追加ディレクトリの .vb)。
+	 * 省略時はあるものとして、.vb は VB / 汎用テキストの両方の伏せ方で伏せる。false の .vb は VB としてだけ
+	 * 伏せる(パックと同じ。汎用テキストの伏せ方は代入の右辺などのコードまで伏せるため)
+	 */
+	genericTextFor?(absolutePath: string): boolean;
+	/**
+	 * パックが除外するファイル (.gitignore / .repomixignore) なら、根拠の ignore ファイルを返す。
+	 * そのファイルの抜粋は載せない (認証情報を置くファイルを除外していることが多いため)
+	 */
+	excludedBy?(absolutePath: string): string | undefined;
 }
 
 const DEFAULT_MAX_ERRORS = 20;
@@ -135,6 +155,173 @@ function renderExcerpt(lines: string[], target: number, context: number): string
 	return out;
 }
 
+/** 語: ASCII の英数字の並び、または ASCII 以外の文字・数字の並び(日本語の文中の英数字の識別子も切り出す) */
+const WORD = /[A-Za-z0-9_]+|[^\x00-\x7F\s\p{P}\p{S}]+/gu;
+/** 語の種類(境界の判定用)。同じ種類の文字が隣にあれば、その位置は語の途中 */
+function charClass(ch: string | undefined): "ascii" | "other" | undefined {
+	if (ch === undefined) return undefined;
+	if (/[A-Za-z0-9_]/.test(ch)) return "ascii";
+	return /[^\x00-\x7F\s\p{P}\p{S}]/u.test(ch) ? "other" : undefined;
+}
+
+/** エラーの本文から伏せる値の最短の長さ(1〜2 文字の値で本文の記号や語を伏せないように) */
+const MIN_MESSAGE_VALUE_LENGTH = 3;
+
+/**
+ * 文面の中の values を [MASKED] に伏せる。一致はすべて元の文面で探してから置き換える(伏せ字の
+ * 中を伏せ直さない)。値の端の文字と同じ種類の文字(ASCII の英数字 / それ以外の文字)が隣にある位置は
+ * 別の語の一部なので伏せない
+ */
+export function maskValues(text: string, values: string[]): string {
+	const ranges: Array<[number, number]> = [];
+	for (const value of values) {
+		if (value === "") continue;
+		const first = charClass(value[0]);
+		const last = charClass(value[value.length - 1]);
+		for (let at = text.indexOf(value); at >= 0; at = text.indexOf(value, at + 1)) {
+			const end = at + value.length;
+			const bounded =
+				(first === undefined || charClass(text[at - 1]) !== first) &&
+				(last === undefined || charClass(text[end]) !== last);
+			if (bounded) ranges.push([at, end]);
+		}
+	}
+	if (ranges.length === 0) return text;
+	ranges.sort((a, b) => a[0] - b[0] || b[1] - a[1]);
+	let out = "";
+	let pos = 0;
+	let open: [number, number] | undefined;
+	for (const range of ranges) {
+		if (open !== undefined && range[0] < open[1]) {
+			open[1] = Math.max(open[1], range[1]);
+			continue;
+		}
+		if (open !== undefined) {
+			out += text.slice(pos, open[0]) + MASK_TOKEN;
+			pos = open[1];
+		}
+		open = [range[0], range[1]];
+	}
+	if (open !== undefined) {
+		out += text.slice(pos, open[0]) + MASK_TOKEN;
+		pos = open[1];
+	}
+	return out + text.slice(pos);
+}
+
+/**
+ * エラーの本文から伏せる値の候補: 抜粋で伏せた値(3 文字以上)と、その中の語(3 文字以上。値の一部が
+ * 識別子として引用されることがあるため)。見えている値・語を除くのは、載せるエラーのファイルが
+ * そろってから(filterVisible)
+ */
+interface MessageCandidates {
+	values: Set<string>;
+	words: Set<string>;
+}
+
+function addCandidates(into: MessageCandidates, maskedValues: string[]): void {
+	for (const value of maskedValues) {
+		for (const word of value.match(WORD) ?? []) {
+			if (word.length >= MIN_MESSAGE_VALUE_LENGTH) into.words.add(word);
+		}
+		// 値は語ごとに見えていても、値そのものは伏せる(語がすべて別の場所に見えていても値は秘密)
+		if (value.length >= MIN_MESSAGE_VALUE_LENGTH) into.values.add(value);
+	}
+}
+
+/**
+ * パックに入るファイルの伏せた表示に見えている値・語を除く(パックでも見えているため。伏せすぎで
+ * 本文が読めなくならないように)
+ */
+function filterVisible(candidates: MessageCandidates, visibleTexts: string[]): string[] {
+	const visibleWords = new Set<string>();
+	const visibleTokens = new Set<string>();
+	for (const text of visibleTexts) {
+		for (const word of text.match(WORD) ?? []) visibleWords.add(word);
+		for (const token of text.split(TOKEN_BREAKS)) if (token !== "") visibleTokens.add(token);
+	}
+	const out = [...candidates.words].filter((w) => !visibleWords.has(w));
+	for (const value of candidates.values) {
+		const words = value.match(WORD) ?? [];
+		// 1 語だけの値は語として見えているかで決まる
+		if (words.length === 1 && words[0] === value) {
+			if (!visibleWords.has(value)) out.push(value);
+			continue;
+		}
+		// 値が見えているとみなすのは、区切り(空白・引用符・括弧・演算子など)で区切られたひとまとまりとして
+		// 見えているときだけ(長い文字列の一部に同じ並びがあるだけなら、値そのものは見えていない)。
+		// 見えていない語を含む値は、値そのものもまず見えていないので探さない
+		if (words.some((w) => !visibleWords.has(w)) || !isVisibleValue(value, visibleTokens, visibleTexts)) {
+			out.push(value);
+		}
+	}
+	return out;
+}
+
+/** 値のひとまとまりの区切り(空白を除く) */
+const VALUE_DELIMITERS = "\"'`()[\\]{}<>,;=&|+!?";
+const TOKEN_BREAKS = new RegExp(`[\\s${VALUE_DELIMITERS}]+`, "u");
+const DELIMITER = new RegExp(`[${VALUE_DELIMITERS}]`, "u");
+
+function isVisibleValue(value: string, visibleTokens: Set<string>, visibleTexts: string[]): boolean {
+	if (!TOKEN_BREAKS.test(value)) return visibleTokens.has(value);
+	// 区切りを含む値(空白を含む合言葉など)は文面で探し、前後が区切りか行の端のときだけ見えているとする。
+	// 空白を含む値は空白を区切りに数えない(長い文の一部に同じ語の並びがあるだけでは見えていない)
+	const spaced = /\s/u.test(value);
+	const isBoundary = (ch: string | undefined): boolean =>
+		ch === undefined || ch === "\n" || DELIMITER.test(ch) || (!spaced && /\s/u.test(ch));
+	return visibleTexts.some((text) => {
+		for (let at = text.indexOf(value); at >= 0; at = text.indexOf(value, at + 1)) {
+			if (isBoundary(text[at - 1]) && isBoundary(text[at + value.length])) return true;
+		}
+		return false;
+	});
+}
+
+/** 文字列の外の VB のコメントの始まりの文字(' ‘ ’)を空白にする(文字の位置は変えない) */
+function neutralizeVbComments(text: string): string {
+	let inString = false;
+	let out = "";
+	for (const ch of text) {
+		if (ch === '"') inString = !inString;
+		out += !inString && (ch === "'" || ch === "\u2018" || ch === "\u2019") ? " " : ch;
+	}
+	return out;
+}
+
+/** VB / C# のコンパイラーが改行として数える文字(CRLF / LF で分けた後に残るもの)。XML などは CR だけ */
+const CODE_LINE_BREAKS = /\r|\u0085|\u2028|\u2029/;
+const XML_LINE_BREAKS = /\r/;
+
+/**
+ * 伏せた行(CRLF / LF で分けた行。伏せる処理はパックと同じ区切りの文字列にかける)を、コンパイラーが
+ * 数える行に分ける。伏せた範囲が改行の文字を含んで分け方が変わる行は、その行を丸ごと伏せる
+ */
+function compilerLines(file: string, lines: string[], shown: string[]): string[] {
+	const breaks = /\.(vb|cs)$/i.test(file) ? CODE_LINE_BREAKS : XML_LINE_BREAKS;
+	const out: string[] = [];
+	lines.forEach((line, i) => {
+		const shownLine = shown[i] ?? "";
+		const parts = line.split(breaks);
+		if (parts.length === 1) {
+			out.push(shownLine);
+			return;
+		}
+		const shownParts = shownLine.split(breaks);
+		for (let k = 0; k < parts.length; k++) {
+			const part = parts[k] ?? "";
+			out.push(
+				shownParts.length === parts.length
+					? (shownParts[k] ?? "")
+					: part.trim() === ""
+						? part
+						: `${/^\s*/.exec(part)?.[0] ?? ""}${MASK_TOKEN}`,
+			);
+		}
+	});
+	return out;
+}
+
 /**
  * Copilot Chat に貼る文面。エラーが 1 件も取り出せなかったときは
  * ログの末尾をそのまま載せる(MSBuild 自体が動かなかった等)
@@ -146,6 +333,9 @@ export function buildErrorReport(
 ): string {
 	const maxErrors = options.maxErrors ?? DEFAULT_MAX_ERRORS;
 	const context = options.contextLines ?? DEFAULT_CONTEXT_LINES;
+	const mask = options.mask;
+	const maskText = (text: string): string =>
+		mask === undefined ? text : maskCredentials(text, { vbSource: false, strict: mask.strict }).content;
 	const parts: string[] = [
 		"## ビルドエラー",
 		"",
@@ -155,23 +345,86 @@ export function buildErrorReport(
 		"- 抜粋は今の実ファイルの内容です。パックの内容と食い違うときは、抜粋が正です",
 		"- SEARCH には抜粋の「│」より右側をそのままコピーしてください(行頭の > と行番号は含めません)",
 		"- 先頭のエラーが原因で後続のエラーが出ていることがあります。先頭から確かめてください",
+		...(mask === undefined
+			? []
+			: ["- 認証情報らしき値は [MASKED] に伏せています。[MASKED] はそのまま残し、値を推測しないでください"]),
 	];
 	if (errors.length === 0) {
-		parts.push("", "エラーの行を取り出せませんでした。ビルドのログの末尾を載せます。", "", "```", logTail.trimEnd(), "```");
+		parts.push("", "エラーの行を取り出せませんでした。ビルドのログの末尾を載せます。", "", "```", maskText(logTail.trimEnd()), "```");
 		return parts.join("\n") + "\n";
 	}
+	// 同じファイルのエラーが続くことが多いので、伏せた行はファイルごとに 1 回だけ作る
+	const maskedFiles = new Map<string, string[] | undefined>();
+	// 抜粋で伏せた値。エラーの本文がその値を引用することがある(引用符を忘れた値が識別子として
+	// 報告されるなど)ため、本文からも伏せる。unknown = 対応づけられないファイルがあった
+	const candidates: MessageCandidates = { values: new Set(), words: new Set() };
+	let unknown = false;
+	const visibleTexts: string[] = [];
+	const linesOf = (file: string): string[] | undefined => {
+		if (!maskedFiles.has(file)) {
+			const lines = options.readLines(file);
+			const vbSource =
+				mask !== undefined &&
+				/\.vb$/i.test(file) &&
+				options.genericTextFor !== undefined &&
+				!options.genericTextFor(file)
+					? true
+					: undefined;
+			const maskOptions =
+				mask === undefined
+					? undefined
+					: { path: file, strict: mask.strict, ...(vbSource !== undefined ? { vbSource } : {}) };
+			const shown =
+				lines === undefined || maskOptions === undefined ? lines : maskLinesForDisplay(lines, maskOptions);
+			if (lines !== undefined && maskOptions !== undefined) {
+				const values = maskedValuesForDisplay(lines, maskOptions);
+				if (values === null) unknown = true;
+				else addCandidates(candidates, values);
+				// パックから除外するファイルは AI に見えていないので、見えている語に数えない
+				if (shown !== undefined && options.excludedBy?.(file) === undefined) visibleTexts.push(shown.join("\n"));
+			}
+			maskedFiles.set(file, lines === undefined || shown === undefined ? undefined : compilerLines(file, lines, shown));
+		}
+		return maskedFiles.get(file);
+	};
 	const shown = errors.slice(0, maxErrors);
+	// 本文を伏せる前に、載せるエラーのファイルをすべて読んでおく
+	for (const error of shown) {
+		const file = resolveErrorFile(error);
+		if (file !== undefined) linesOf(file);
+	}
+	const messageMasks = filterVisible(candidates, visibleTexts);
+	const maskMessage = (text: string): string => {
+		if (mask === undefined) return text;
+		// 本文そのものも VB のソースとして伏せる。コンパイラーはエラーのないファイルの宣言も引用する
+		// (省略可能な引数の既定値を含むシグネチャなど)。' で囲んだ引用をコメントとして読み飛ばさないよう、
+		// 文字列の外の ' を空白にしてから伏せる値を求め、元の本文で伏せる
+		const neutral = neutralizeVbComments(text);
+		const own = maskedValuesForDisplay([neutral], { path: "message.vb", strict: mask.strict, vbSource: true });
+		if (unknown || own === null) {
+			// どの値を伏せたか分からないときは、VB のソースとしての伏せ方をそのまま重ねる
+			return maskCredentials(maskText(maskValues(neutral, messageMasks)), { vbSource: true, strict: mask.strict })
+				.content;
+		}
+		return maskText(maskValues(text, [...messageMasks, ...own]));
+	};
 	shown.forEach((error, index) => {
 		const file = resolveErrorFile(error);
-		const where =
+		const lines = file === undefined ? undefined : linesOf(file);
+		const located =
 			file === undefined
 				? error.origin
 				: `${displayPath(file, options.rootDir)}${error.line !== undefined ? `:${error.line}` : ""}`;
-		parts.push("", `### ${index + 1}. ${where} — ${error.code}`, error.message);
+		// 読めるファイルのパスはそのまま。ファイルでない発生元(パスに見える接続文字列など)は伏せる
+		const where = lines === undefined ? maskText(located) : located;
+		parts.push("", `### ${index + 1}. ${where} — ${error.code}`, maskMessage(error.message));
 		if (file === undefined || error.line === undefined) {
 			return;
 		}
-		const lines = options.readLines(file);
+		if (options.excludedBy?.(file) !== undefined) {
+			parts.push("", "(.gitignore / .repomixignore でパックから除外しているファイルのため、抜粋は載せません)");
+			return;
+		}
 		if (lines === undefined || error.line > lines.length) {
 			parts.push("", "(ファイルを読めなかったため抜粋はありません)");
 			return;

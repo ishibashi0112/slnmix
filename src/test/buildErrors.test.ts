@@ -6,6 +6,7 @@ import * as assert from "assert";
 import {
 	buildErrorReport,
 	displayPath,
+	maskValues,
 	parseMsbuildErrors,
 	resolveErrorFile,
 	type BuildError,
@@ -123,6 +124,298 @@ suite("buildErrorReport", () => {
 		const report = buildErrorReport([], "何かが失敗した\n", { rootDir: "C:\\src", readLines });
 		assert.ok(report.includes("エラーの行を取り出せませんでした"));
 		assert.ok(report.includes("```\n何かが失敗した\n```"));
+	});
+
+	test("mask 指定時は抜粋・本文・ログの末尾の認証情報を伏せる(行番号は変えない)", () => {
+		const db = [
+			"Module Db",
+			"    Sub Connect()",
+			'        Dim pwd As String = "Hunter2Secret"',
+			'        Dim conn = "Server=db1;Password=p@ss;"',
+			"        Opn(pwd)",
+			"    End Sub",
+			"End Module",
+		];
+		const read = (p: string): string[] | undefined => (p === "C:\\src\\Db.vb" ? db : undefined);
+		const report = buildErrorReport(
+			[{ origin: "C:\\src\\Db.vb", line: 5, code: "BC30451", message: "'Opn' は宣言されていません。Password=p@ss" }],
+			"",
+			{ rootDir: "C:\\src", readLines: read, contextLines: 2, mask: { strict: true } },
+		);
+		assert.ok(!report.includes("Hunter2Secret"), report);
+		assert.ok(!report.includes("p@ss"), report);
+		assert.ok(report.includes('  3 │        Dim pwd As String = "[MASKED]"'), report);
+		assert.ok(report.includes(">5 │        Opn(pwd)") || report.includes("> 5 │        Opn(pwd)"), report);
+		assert.ok(report.includes("[MASKED] はそのまま残し"));
+
+		const tail = buildErrorReport([], "Password=p@ss の接続に失敗\n", {
+			rootDir: "C:\\src",
+			readLines: read,
+			mask: { strict: true },
+		});
+		assert.ok(!tail.includes("p@ss"), tail);
+	});
+
+	test("ファイル名のないエラーの発生元も伏せる", () => {
+		const report = buildErrorReport(
+			[{ origin: "Data Source=db1;User ID=sa;Password=Hunter2", code: "DB0001", message: "接続に失敗しました" }],
+			"",
+			{ rootDir: "C:\\src", readLines, mask: { strict: true } },
+		);
+		assert.ok(!report.includes("Hunter2"), report);
+	});
+
+	test("パスに見える発生元でも、ファイルとして読めなければ伏せる", () => {
+		const report = buildErrorReport(
+			[
+				{
+					origin: "Data Source=.\\SQLEXPRESS;User ID=sa;Password=Hunter2",
+					code: "DB0001",
+					message: "x",
+					project: "C:\\src\\App.vbproj",
+				},
+			],
+			"",
+			{ rootDir: "C:\\src", readLines: () => undefined, mask: { strict: true } },
+		);
+		assert.ok(!report.includes("Hunter2"), report);
+	});
+
+	test(".gitignore でパックから除外しているファイルの抜粋は載せない", () => {
+		const secret = ['    Public Const DB_PW As String = "Hunter2Pw"', "    Opn()"];
+		const report = buildErrorReport(
+			[{ origin: "C:\\src\\DbConfig.vb", line: 2, code: "BC30451", message: "'Opn' は宣言されていません。" }],
+			"",
+			{
+				rootDir: "C:\\src",
+				readLines: () => secret,
+				mask: { strict: true },
+				excludedBy: (p) => (p.endsWith("DbConfig.vb") ? "C:\\src\\.gitignore" : undefined),
+			},
+		);
+		assert.ok(!report.includes("Hunter2Pw"), report);
+		assert.ok(report.includes("パックから除外しているファイルのため"), report);
+	});
+
+	test("抜粋で伏せた値は、エラーの本文の引用からも伏せる", () => {
+		const db = ["Module Db", "    Sub A()", "        Dim pwd = Hunter2Secret", "    End Sub", "End Module"];
+		const error = { origin: "C:\\src\\Db.vb", line: 3, code: "BC30451", message: "'Hunter2Secret' は宣言されていません。" };
+		const report = buildErrorReport([error], "", { rootDir: "C:\\src", readLines: () => db, mask: { strict: true } });
+		assert.ok(!report.includes("Hunter2Secret"), report);
+		assert.ok(report.includes("'[MASKED]' は宣言されていません。"), report);
+		const excluded = buildErrorReport([error], "", {
+			rootDir: "C:\\src",
+			readLines: () => db,
+			mask: { strict: true },
+			excludedBy: () => "C:\\src\\.gitignore",
+		});
+		assert.ok(!excluded.includes("Hunter2Secret"), excluded);
+	});
+
+	test("本文が伏せた値の一部 (識別子) を引用しても伏せ、パックで見えている語は伏せない", () => {
+		const db = [
+			"Module Db",
+			"    Sub A()",
+			"        Dim pwd = Hunter2Secret.Trim()",
+			'        Me.txtPassword.Name = "txtPassword"',
+			'        Me.txtPassword.PasswordChar = "*"c',
+			'        Dim pwdOpen = "["',
+			"    End Sub",
+			"End Module",
+		];
+		const report = buildErrorReport(
+			[
+				{ origin: "C:\\src\\Db.vb", line: 3, code: "BC30451", message: "'Hunter2Secret' は宣言されていません。" },
+				{ origin: "C:\\src\\Db.vb", line: 4, code: "BC30260", message: "'txtPassword' は、class 'frmLogin' で既に宣言されています。" },
+				{
+					origin: "C:\\src\\Db.vb",
+					line: 6,
+					code: "BC30452",
+					message: "演算子 '&' は、型 'String' および 'Object[]' に対して定義されていません。",
+				},
+			],
+			"",
+			{ rootDir: "C:\\src", readLines: () => db, mask: { strict: true } },
+		);
+		assert.ok(!report.includes("Hunter2Secret"), report);
+		assert.ok(report.includes("'txtPassword' は、class 'frmLogin' で既に宣言されています。"), report);
+		assert.ok(report.includes("演算子 '&' は、型 'String' および 'Object[]' に対して定義されていません。"), report);
+	});
+
+	test("行はコンパイラーと同じく単独の CR も 1 行と数え、伏せ方はパックと同じ区切りで決める", () => {
+		// readLines は CRLF / LF で分けた行を返す。2 行目に単独の CR がある
+		const lines = ["Module M", "    ' old\r    Sub Main()", '        Dim dbPass As String = "Hunt\u2028er2"', "        Foo(", "    End Sub", "End Module"];
+		const report = buildErrorReport(
+			[{ origin: "C:\\p\\M.vb", line: 6, code: "BC30201", message: "式が必要です。" }],
+			"",
+			{ rootDir: "C:\\p", readLines: () => lines, mask: { strict: true } },
+		);
+		assert.ok(report.includes("> 6 │        Foo("), report);
+		assert.ok(!report.includes("Hunt"), report);
+		assert.ok(!report.includes("er2"), report);
+	});
+
+	test("ほかのファイルで見えている語は、伏せた値の中の語でも本文から伏せない", () => {
+		const files: Record<string, string[]> = {
+			"C:\\src\\FrmLogin.Designer.vb": ["Partial Class FrmLogin", '    Me.lblUser.Text = "UserName"', "End Class"],
+			"C:\\src\\LoginService.vb": ["Module LoginService", "    Function Ok(u As Account) As Boolean", '        Return u.UserName <> ""', "    End Function", "End Module"],
+		};
+		const report = buildErrorReport(
+			[
+				{ origin: "C:\\src\\FrmLogin.Designer.vb", line: 2, code: "BC30002", message: "型 'X' が定義されていません。" },
+				{ origin: "C:\\src\\LoginService.vb", line: 3, code: "BC30456", message: "'UserName' は 'Account' のメンバーではありません。" },
+			],
+			"",
+			{ rootDir: "C:\\src", readLines: (p) => files[p], mask: { strict: true } },
+		);
+		assert.ok(report.includes("'UserName' は 'Account' のメンバーではありません。"), report);
+	});
+
+	test("伏せた値は、中の語がすべてほかの行で見えていても値ごと本文から伏せる", () => {
+		const form = [
+			"Partial Class FrmLogin",
+			'    Me.lblCity.Text = "Kyoto"',
+			'    Me.lblDept.Text = "Sales"',
+			'    Me.lblYear.Text = "2024"',
+			'    Me.txtPassword.Text = "Kyoto-Sales-2024"',
+			'    Dim password As String = "P@$$w0rd!23"',
+			"End Class",
+		];
+		const errors = [
+			{ origin: "C:\\src\\FrmLogin.vb", line: 5, code: "CA1303", message: 'リテラルを渡しています: "Kyoto-Sales-2024"' },
+			{ origin: "C:\\src\\FrmLogin.vb", line: 6, code: "CA1303", message: "リテラルを渡しています: 'P@$$w0rd!23'" },
+		];
+		const report = buildErrorReport(errors, "", { rootDir: "C:\\src", readLines: () => form, mask: { strict: true } });
+		assert.ok(!report.includes("Kyoto-Sales-2024"), report);
+		assert.ok(report.includes('リテラルを渡しています: "[MASKED]"'), report);
+		assert.ok(!report.includes("w0rd"), report);
+		assert.ok(report.includes("リテラルを渡しています: '[MASKED]'"), report);
+		assert.ok(report.includes('Me.lblCity.Text = "Kyoto"'), report);
+		// 値のあるファイルがパックから除外され、語だけがほかのファイルに見えている
+		const files: Record<string, string[]> = {
+			"C:\\src\\Secrets.vb": ["Module Secrets", '    Me.txtPassword.Text = "Kyoto-Sales-2024"', "End Module"],
+			"C:\\src\\Labels.vb": ["Module Labels", '    Dim a = "Kyoto", b = "Sales", c = "2024"', "End Module"],
+		};
+		const excluded = buildErrorReport(
+			[
+				{ origin: "C:\\src\\Secrets.vb", line: 2, code: "CA1303", message: 'リテラルを渡しています: "Kyoto-Sales-2024"' },
+				{ origin: "C:\\src\\Labels.vb", line: 2, code: "BC42024", message: "使われていない変数" },
+			],
+			"",
+			{
+				rootDir: "C:\\src",
+				readLines: (p) => files[p],
+				mask: { strict: true },
+				excludedBy: (p) => (p.endsWith("Secrets.vb") ? "C:\\src\\.gitignore" : undefined),
+			},
+		);
+		assert.ok(!excluded.includes("Kyoto-Sales-2024"), excluded);
+	});
+
+	test("エラーのないファイルの宣言の既定値を本文が引用しても伏せる", () => {
+		// コンパイラーは呼び出し先のシグネチャを省略可能な引数の既定値ごと引用する
+		const form = ["Public Class Form1", "    Sub A()", "        Db.Open()", "    End Sub", "End Class"];
+		const report = buildErrorReport(
+			[
+				{
+					origin: "C:\\src\\Form1.vb",
+					line: 3,
+					code: "BC30455",
+					message:
+						"パラメーター 'server' に対して引数が指定されていません ('Public Function Open(server As String, [password As String = \"Zq9TigerSecret\"]) As Boolean')。",
+				},
+			],
+			"",
+			{ rootDir: "C:\\src", readLines: () => form, mask: { strict: true } },
+		);
+		assert.ok(!report.includes("Zq9TigerSecret"), report);
+		assert.ok(report.includes("[password As String = \"[MASKED]\"]"), report);
+		assert.ok(report.includes("パラメーター 'server' に対して引数が指定されていません"), report);
+	});
+
+	test("長い文字列の一部に同じ並びがあるだけなら、伏せた値は見えているとみなさない", () => {
+		const lines = [
+			"Module M",
+			'    Dim title = "Kyoto-Sales-2024 Report"',
+			'    Dim password As String = "Sales-2024"',
+			'    Dim note = "abc def ghi"',
+			'    Dim secret As String = "def ghi"',
+			"End Module",
+		];
+		const report = buildErrorReport(
+			[
+				{ origin: "C:\\src\\M.vb", line: 3, code: "CA1303", message: 'リテラルを渡しています: "Sales-2024"' },
+				{ origin: "C:\\src\\M.vb", line: 5, code: "CA1303", message: 'リテラルを渡しています: "def ghi"' },
+			],
+			"",
+			{ rootDir: "C:\\src", readLines: () => lines, mask: { strict: true } },
+		);
+		assert.ok(!report.includes('"Sales-2024"'), report);
+		assert.ok(!report.includes('"def ghi"'), report);
+		assert.ok(report.includes('Dim title = "Kyoto-Sales-2024 Report"'), report);
+	});
+
+	test("generic の追加ディレクトリでない .vb は、パックと同じく VB のソースとしてだけ伏せる", () => {
+		const lines = ["Module M", "    Sub A()", "        user.Password = txtPasword.Text", "    End Sub", "End Module"];
+		const error = { origin: "C:\\src\\M.vb", line: 3, code: "BC30451", message: "'txtPasword' は宣言されていません。" };
+		const asPack = buildErrorReport([error], "", {
+			rootDir: "C:\\src",
+			readLines: () => lines,
+			mask: { strict: true },
+			genericTextFor: () => false,
+		});
+		assert.ok(asPack.includes("> 3 │        user.Password = txtPasword.Text"), asPack);
+		assert.ok(asPack.includes("'txtPasword' は宣言されていません。"), asPack);
+		const generic = buildErrorReport([error], "", {
+			rootDir: "C:\\src",
+			readLines: () => lines,
+			mask: { strict: true },
+			genericTextFor: () => true,
+		});
+		assert.ok(!generic.includes("txtPasword"), generic);
+	});
+
+	test("本文の日本語に続く引用でも伏せる", () => {
+		const lines = ["Module M", "    Dim pwd = Hunter2Secret", "End Module"];
+		const report = buildErrorReport(
+			[{ origin: "C:\\src\\M.vb", line: 2, code: "BC30451", message: "Hunter2Secretは宣言されていません。" }],
+			"",
+			{ rootDir: "C:\\src", readLines: () => lines, mask: { strict: true } },
+		);
+		assert.ok(!report.includes("Hunter2Secret"), report);
+	});
+
+	test("maskValues は短い値で別の語の一部を伏せない", () => {
+		assert.strictEqual(maskValues("'sa' usage sa_x sa.", ["sa"]), "'[MASKED]' usage sa_x [MASKED].");
+		assert.strictEqual(maskValues("p@ss!", ["p@ss!"]), "[MASKED]");
+	});
+
+	test("同じファイルのエラーが続いても、ファイルは 1 回だけ読んで伏せる", () => {
+		let reads = 0;
+		const report = buildErrorReport(
+			[1, 2, 3].map((line) => ({ origin: "C:\\src\\A.vb", line, code: "BC1", message: "x" })),
+			"",
+			{
+				rootDir: "C:\\src",
+				readLines: () => {
+					reads += 1;
+					return ["a", "b", "c"];
+				},
+				mask: { strict: true },
+			},
+		);
+		assert.strictEqual(reads, 1);
+		assert.ok(report.includes("### 3."));
+	});
+
+	test("mask 省略時(--no-mask)は伏せない", () => {
+		const report = buildErrorReport(
+			[{ origin: "C:\\src\\App\\A.vb", line: 6, code: "BC1", message: "Password=p@ss" }],
+			"",
+			{ rootDir: "C:\\src", readLines },
+		);
+		assert.ok(report.includes("Password=p@ss"));
+		assert.ok(!report.includes("[MASKED] はそのまま残し"));
 	});
 });
 

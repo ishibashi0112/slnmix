@@ -128,6 +128,30 @@ const TOKEN_PATTERNS: ReadonlyArray<{ kind: string; regex: RegExp }> = [
 /** Bearer トークン(bearer という語は残しトークン部のみマスク) */
 const BEARER_TOKEN = /\b(bearer\s+)([A-Za-z0-9._~+/-]{16,}=*)/gi;
 
+/**
+ * 一部だけ伏せたトークンの残り。厳格モードでは高エントロピー値の判定がトークンの形式より
+ * 先に走るため、20 文字未満の部分(JWT の署名、Bearer トークンの「.」の後ろなど)が残る
+ * ことがある。伏せ字を含み、伏せていない英数字も残っているものを丸ごと伏せる
+ */
+const PARTIAL_JWT =
+	/(?:\beyJ[A-Za-z0-9_-]{8,}|\[MASKED\])\.(?:eyJ[A-Za-z0-9_-]{8,}|\[MASKED\])\.(?:[A-Za-z0-9_-]{8,}|\[MASKED\])/g;
+const PARTIAL_BEARER = /\b(bearer\s+)((?:\[MASKED\]|[A-Za-z0-9._~+/-])+=*)/gi;
+
+/**
+ * 前の 2 つが伏せ字で、さらに「.」の区切りが続く並び(ホスト名など)。JWT は「.」で 3 つに区切られるので
+ * これはトークンの残りではない(高エントロピーのサブドメインを伏せた接続先のホスト名を伏せすぎない)
+ */
+function isDottedName(whole: string, offset: number, all: string): boolean {
+	if (!whole.startsWith(`${MASK}.${MASK}.`)) return false;
+	const after = all.slice(offset + whole.length, offset + whole.length + 2);
+	return all[offset - 1] === "." || /^\.[A-Za-z0-9]/.test(after);
+}
+
+/** 伏せ字を含み、伏せていない英数字も残っているか */
+function isPartlyMasked(token: string): boolean {
+	return token.includes(MASK) && /[A-Za-z0-9]/.test(token.split(MASK).join(""));
+}
+
 /** PRIVATE KEY ブロック(BEGIN/END 行は残し中身をマスク) */
 const PRIVATE_KEY_BLOCK =
 	/(-----BEGIN [A-Z ]*PRIVATE KEY-----)[\s\S]+?(-----END [A-Z ]*PRIVATE KEY-----)/g;
@@ -194,14 +218,33 @@ function maskEntropyText(
 	});
 }
 
+/** lineOf の改行位置の控え(同じ文字列への問い合わせが続くため。大きいファイルで遅くならないように) */
+let lineIndexText: string | undefined;
+let lineIndexBreaks: number[] = [];
+
 function lineOf(text: string, index: number): number {
-	let line = 1;
-	for (let i = 0; i < index && i < text.length; i++) {
-		if (text.charCodeAt(i) === 0x0a) {
-			line += 1;
+	if (text !== lineIndexText) {
+		lineIndexBreaks = [];
+		for (let i = 0; i < text.length; i++) {
+			if (text.charCodeAt(i) === 0x0a) {
+				lineIndexBreaks.push(i);
+			}
 		}
 	}
-	return line;
+	// 内容が同じ別の文字列なら控えをそのまま使い、次からは同じ文字列として速く比べられるようにする
+	lineIndexText = text;
+	// index より前にある改行の数 + 1
+	let lo = 0;
+	let hi = lineIndexBreaks.length;
+	while (lo < hi) {
+		const mid = (lo + hi) >> 1;
+		if ((lineIndexBreaks[mid] ?? 0) < index) {
+			lo = mid + 1;
+		} else {
+			hi = mid;
+		}
+	}
+	return lo + 1;
 }
 
 /** 接続文字列キー=値のマスク(テキスト断片に適用)。offsetBase は行番号計算用 */
@@ -318,6 +361,16 @@ function maskVbSource(
 	strict: boolean,
 ): string {
 	let out = "";
+	// 直前のコード(out の末尾)の控え。out を毎回切り出すと、大きいファイルで
+	// 文字列全体の複製が文字列リテラルごとに起きて遅くなるため
+	let recent = "";
+	const emit = (piece: string): void => {
+		out += piece;
+		recent += piece;
+		if (recent.length > 400) {
+			recent = recent.slice(-200);
+		}
+	};
 	let i = 0;
 	const n = content.length;
 
@@ -347,7 +400,7 @@ function maskVbSource(
 
 			// 直前のコードが「秘密系変数 = 」「秘密系の名前付き引数 :=」
 			// 「秘密系メソッドの引数」ならリテラル全体をマスク
-			const tail = out.slice(-200);
+			const tail = recent.slice(-200);
 			let kind: string | undefined;
 			if (closed && inner.trim() !== "") {
 				const assignMatch = ASSIGNMENT_TAIL.exec(tail);
@@ -364,7 +417,7 @@ function maskVbSource(
 			}
 			if (kind !== undefined) {
 				findings.push({ line: lineOf(content, i), kind });
-				out += `"${MASK}"`;
+				emit(`"${MASK}"`);
 				i = j + 1;
 				continue;
 			}
@@ -378,7 +431,7 @@ function maskVbSource(
 					lineOf(content, i),
 				);
 			}
-			out += `"${maskedInner}${closed ? '"' : ""}`;
+			emit(`"${maskedInner}${closed ? '"' : ""}`);
 			i = closed ? j + 1 : j;
 			continue;
 		}
@@ -389,17 +442,14 @@ function maskVbSource(
 			while (j < n && content[j] !== "\n") {
 				j += 1;
 			}
-			out += maskCommentText(
-				content.slice(i, j),
-				findings,
-				lineOf(content, i),
-				strict,
+			emit(
+				maskCommentText(content.slice(i, j), findings, lineOf(content, i), strict),
 			);
 			i = j;
 			continue;
 		}
 
-		out += ch;
+		emit(ch);
 		i += 1;
 	}
 	return out;
@@ -470,6 +520,225 @@ export function maskCredentials(content: string, options: MaskOptions): MaskResu
 			return `${prefix}${MASK}`;
 		},
 	);
+	// 一部だけ伏せたトークンの残り(伏せ字がなければ探さない)
+	if (result.includes(MASK)) {
+		result = result.replace(PARTIAL_JWT, (whole: string, offset: number, all: string) =>
+			isPartlyMasked(whole) && !isDottedName(whole, offset, all) ? MASK : whole,
+		);
+		result = result.replace(PARTIAL_BEARER, (whole: string, prefix: string, token: string) =>
+			isPartlyMasked(token) ? `${prefix}${MASK}` : whole,
+		);
+	}
 
+	// 大きい文字列を控えに残したままにしない
+	lineIndexText = undefined;
+	lineIndexBreaks = [];
 	return { content: result, findings };
+}
+
+// ---------------------------------------------------------------------------
+// 伏せた表示 (行の位置を保つ)。slnmix のビルドエラーの抜粋と同じ処理
+// ---------------------------------------------------------------------------
+
+/** slnmix が置き換える伏せ字 */
+export const MASK_TOKEN = MASK;
+
+export function hasMaskToken(line: string): boolean {
+	return line.includes(MASK);
+}
+
+/** 伏せ方 (slnmix のパックが取り得る組み合わせ) */
+interface MaskMode {
+	vbSource: boolean;
+	strict: boolean;
+}
+
+/** 伏せた範囲 (元の文字列の位置。tokens は隣り合った伏せ字をまとめた数) */
+interface MaskSpan {
+	start: number;
+	end: number;
+	tokens: number;
+}
+
+/**
+ * slnmix が使い得る伏せ方。.vb は VB として伏せるのが通常だが、generic 構成の追加ディレクトリでは
+ * 汎用テキストとして伏せる。strict は --no-strict-mask で切られる
+ */
+function maskModes(path: string, stricts: boolean[]): MaskMode[] {
+	const vbs = /\.vb$/i.test(path) ? [true, false] : [false];
+	return vbs.flatMap((vbSource) => stricts.map((strict) => ({ vbSource, strict })));
+}
+
+/** 秘密鍵ブロックの置換 (BEGIN と END の間を「改行 + 伏せ字 + 改行」にする) の跡 */
+const COLLAPSED_PRIVATE_KEY =
+	/(-----BEGIN [A-Z ]*PRIVATE KEY-----)\n\[MASKED\]\n(-----END [A-Z ]*PRIVATE KEY-----)/g;
+
+/**
+ * maskCredentials が伏せた範囲を、元の文字列の位置で返す。
+ * 伏せる処理は「元の文字列の一部を [MASKED] に置き換える」だけ (秘密鍵ブロックの改行を除く) なので、
+ * 伏せた結果を [MASKED] で区切った各部分を元の文字列から順に探して位置を決める。
+ * 区切りの部分は通常長い (次の伏せ字までの全文) ため位置は一意に決まり、最後に組み立て直して確かめる。
+ * 対応づけられなければ null (呼び出し側は安全側に倒す)
+ */
+function maskedSpans(text: string, mode: MaskMode): MaskSpan[] | null {
+	const masked = maskCredentials(text, mode).content.replace(
+		COLLAPSED_PRIVATE_KEY,
+		(_whole, begin: string, end: string) => `${begin}${MASK}${end}`,
+	);
+	const segments = masked.split(MASK);
+	const head = segments[0] ?? "";
+	if (!text.startsWith(head)) return null;
+	const spans: MaskSpan[] = [];
+	let pos = head.length;
+	let tokens = 0;
+	let spanStart = pos;
+	for (let j = 1; j < segments.length; j++) {
+		const seg = segments[j] ?? "";
+		tokens += 1;
+		if (seg === "" && j < segments.length - 1) {
+			// 伏せ字が隣り合う: 境目は決められないので 1 つの範囲にまとめる
+			continue;
+		}
+		const end = j === segments.length - 1 ? text.length - seg.length : text.indexOf(seg, pos + 1);
+		if (end <= pos || (j === segments.length - 1 && !text.endsWith(seg))) return null;
+		spans.push({ start: spanStart, end, tokens });
+		pos = end + seg.length;
+		spanStart = pos;
+		tokens = 0;
+	}
+	if (pos !== text.length && segments.length > 1) return null;
+	if (segments.length === 1 && masked !== text) return null;
+	return spans;
+}
+
+/** 伏せた表示の 1 行 */
+export interface MaskedLine {
+	/** 伏せた表示 (伏せ字のない行は元の行と同じ) */
+	text: string;
+	/**
+	 * 伏せ字ごとの元の値 (左から順)。伏せ字のない行は空配列。
+	 * 元の値を 1 つずつに分けられない行と、複数行にまたがる値の一部を伏せた行は null (戻さない)
+	 */
+	values: string[] | null;
+	/**
+	 * 複数行にまたがる値 (秘密鍵の本文・複数行の属性値) の一部を伏せた行。slnmix のパックでは
+	 * これらの行は 1 行にまとめて表示されるため、AI が写した SEARCH とは本来一致しない
+	 */
+	wrapped: boolean;
+}
+
+/**
+ * 伏せた範囲を行ごとに当てはめる (行の数と位置は元のまま)。
+ * 複数行にまたがる範囲は各行の該当部分をそれぞれ伏せる (行頭・行末の空白は残す)
+ */
+function linesFromSpans(lines: string[], text: string, spans: MaskSpan[]): MaskedLine[] {
+	const out: MaskedLine[] = [];
+	let lineStart = 0;
+	let k = 0;
+	for (const line of lines) {
+		const lineEnd = lineStart + line.length;
+		while (k < spans.length && (spans[k]?.end ?? 0) <= lineStart) k += 1;
+		let shown = "";
+		const values: string[] = [];
+		let separable = true;
+		let wrapped = false;
+		let cursor = lineStart;
+		for (let j = k; j < spans.length; j++) {
+			const span = spans[j];
+			if (span === undefined || span.start >= lineEnd) break;
+			let from = Math.max(span.start, lineStart);
+			let to = Math.min(span.end, lineEnd);
+			if (span.start < lineStart || span.end > lineEnd) {
+				wrapped = true;
+				while (from < to && /\s/.test(text.charAt(from))) from += 1;
+				while (to > from && /\s/.test(text.charAt(to - 1))) to -= 1;
+			}
+			if (to <= from) continue;
+			shown += text.slice(cursor, from) + MASK.repeat(span.tokens);
+			if (span.tokens === 1) values.push(text.slice(from, to));
+			else separable = false;
+			cursor = to;
+		}
+		shown += text.slice(cursor, lineEnd);
+		out.push({ text: shown, values: separable && !wrapped ? values : null, wrapped });
+		lineStart = lineEnd + 1;
+	}
+	return out;
+}
+
+/** 重なる・接する範囲をまとめる (表示用。値は使わない) */
+function mergeSpans(spans: MaskSpan[]): MaskSpan[] {
+	const sorted = [...spans].sort((a, b) => a.start - b.start);
+	const merged: MaskSpan[] = [];
+	for (const span of sorted) {
+		const last = merged[merged.length - 1];
+		if (last !== undefined && span.start <= last.end) {
+			last.end = Math.max(last.end, span.end);
+		} else {
+			merged.push({ start: span.start, end: span.end, tokens: 1 });
+		}
+	}
+	return merged;
+}
+
+export interface MaskLinesOptions {
+	/** ファイルのパス (拡張子で伏せ方を選ぶ) */
+	path: string;
+	/** 高エントロピー文字列も伏せるか (省略時は true) */
+	strict?: boolean;
+	/**
+	 * VB のソースとして伏せるか。パックでの伏せ方が分かっているとき (slnmix build) に指定する。
+	 * 省略時は拡張子から、パックが取り得る伏せ方をすべて使う (.vb は VB / 汎用テキストの両方)
+	 */
+	vbSource?: boolean;
+}
+
+/** 抜粋で伏せる範囲 (どの伏せ方でも伏せる範囲を合わせたもの)。対応づけられない伏せ方があれば null */
+function displaySpans(text: string, options: MaskLinesOptions): MaskSpan[] | null {
+	const all: MaskSpan[] = [];
+	// 厳格モードの結果は厳格でない結果を含むとは限らない(トークンの形式の判定の順番など)ため、
+	// strict のときは両方の範囲を伏せる
+	const stricts = (options.strict ?? true) ? [true, false] : [false];
+	const vbSource = options.vbSource;
+	const modes =
+		vbSource === undefined ? maskModes(options.path, stricts) : stricts.map((strict) => ({ vbSource, strict }));
+	for (const mode of modes) {
+		const spans = maskedSpans(text, mode);
+		if (spans === null) return null;
+		// 伏せた範囲が多いファイル (大きな埋め込み画像など) で引数の上限を超えないよう 1 つずつ足す
+		for (const span of spans) all.push(span);
+	}
+	return mergeSpans(all);
+}
+
+/**
+ * AI に渡す抜粋のための伏せた表示 (行の数と位置は元のまま)。
+ * slnmix のパックが取り得るどの伏せ方 (.vb を VB として / 汎用テキストとして、strict の有無) でも伏せられる範囲を
+ * すべて伏せる。伏せた範囲を元の位置に対応づけられない伏せ方があれば、空行以外をすべて伏せる (安全側)
+ */
+export function maskLinesForDisplay(lines: string[], options: MaskLinesOptions): string[] {
+	const text = lines.join("\n");
+	const spans = displaySpans(text, options);
+	if (spans === null) {
+		return lines.map((l) => (l.trim() === "" ? l : `${/^\s*/.exec(l)?.[0] ?? ""}${MASK}`));
+	}
+	return linesFromSpans(lines, text, spans).map((l) => l.text);
+}
+
+/**
+ * 抜粋 (maskLinesForDisplay) で伏せる元の値 (行ごとに分け、前後の空白を除き、重複なし)。抜粋の外の
+ * 文面 (ビルドエラーの本文など) に同じ値が出たときに伏せるため。対応づけられない伏せ方があれば null
+ */
+export function maskedValuesForDisplay(lines: string[], options: MaskLinesOptions): string[] | null {
+	const text = lines.join("\n");
+	const spans = displaySpans(text, options);
+	if (spans === null) return null;
+	const values = new Set<string>();
+	for (const span of spans) {
+		for (const part of text.slice(span.start, span.end).split("\n")) {
+			const value = part.trim();
+			if (value !== "" && value !== MASK) values.add(value);
+		}
+	}
+	return [...values];
 }

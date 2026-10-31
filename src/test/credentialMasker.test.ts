@@ -5,7 +5,7 @@
  */
 
 import * as assert from "assert";
-import { maskCredentials } from "../services/credentialMasker";
+import { maskCredentials, maskLinesForDisplay, maskedValuesForDisplay } from "../services/credentialMasker";
 
 const VB = { vbSource: true };
 const GENERIC = { vbSource: false };
@@ -292,3 +292,136 @@ suite("credentialMasker: 高エントロピー値(厳格モード)", () => {
 	});
 });
 
+
+suite("credentialMasker: 一部だけ伏せたトークンの残り(厳格モード)", () => {
+	test("Bearer トークンの「.」の後ろの短い部分も伏せる", () => {
+		const vb = 'req.Headers.Add("Authorization", "Bearer Ab1Cd2Ef3Gh4Ij5Kl6Mn7Op8.sEcReTtAiLvAlUe")';
+		const result = maskCredentials(vb, VB);
+		assert.ok(!result.content.includes("sEcReTtAiLvAlUe"), result.content);
+		assert.ok(result.content.includes('"Bearer [MASKED]"'));
+	});
+
+	test("JWT の 20 文字未満の部分も伏せる", () => {
+		const jwt = "token: eyJhbGciOiJub25lIn0.eyJ1c2VyIjoiYWRtaW4iLCJyb2xlIjoiYWRtaW4ifQ.abcdefghijklmnop";
+		const result = maskCredentials(jwt, GENERIC);
+		assert.strictEqual(result.content, "token: [MASKED]");
+	});
+
+	test("すべて伏せた部分だけなら変えない", () => {
+		const jwt =
+			"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c";
+		assert.strictEqual(maskCredentials(jwt, GENERIC).content, "[MASKED].[MASKED].[MASKED]");
+		assert.strictEqual(maskCredentials("Use Bearer [MASKED].", GENERIC).content, "Use Bearer [MASKED].");
+	});
+
+	test("JWT の形でないドット区切りの語は伏せすぎない", () => {
+		const url = "https://k7Qx9Pz2Lm4Vb8Nc3Rt.execute-api.ap-northeast-1.amazonaws.com";
+		assert.strictEqual(
+			maskCredentials(url, { ...GENERIC, strict: true }).content,
+			"https:[MASKED].execute-api.ap-northeast-1.amazonaws.com",
+		);
+		assert.strictEqual(
+			maskCredentials("AKIAIOSFODNN7EXAMPLE.something.whatever", GENERIC).content,
+			"[MASKED].something.whatever",
+		);
+		assert.strictEqual(maskCredentials("x = [MASKED].Resource1.Designer", GENERIC).content, "x = [MASKED].Resource1.Designer");
+		// 高エントロピーのサブドメインを 2 つ伏せたホスト名は、残りを伏せない(JWT は 3 つに区切られる)
+		assert.strictEqual(
+			maskCredentials("Server=tcp:Xk3pQ9vLm2Rt7sWz8Yb4.Hq5nJ8cV1xKz6Tg3Lp0W.database.windows.net;", { ...GENERIC, strict: true })
+				.content,
+			"Server=tcp:[MASKED].[MASKED].database.windows.net;",
+		);
+	});
+});
+
+suite("credentialMasker: maskLinesForDisplay(行の位置を保つ抜粋用)", () => {
+	test("行数を変えずに伏せる", () => {
+		const lines = ['Dim pwd As String = "s3cret"', "Open(pwd)"];
+		assert.deepStrictEqual(maskLinesForDisplay(lines, { path: "a.vb" }), [
+			'Dim pwd As String = "[MASKED]"',
+			"Open(pwd)",
+		]);
+	});
+
+	test("秘密鍵のブロックは本文を伏せ、行数と前後の行を変えない", () => {
+		const body = "MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7";
+		const lines = ["-----BEGIN PRIVATE KEY-----", body, body, "-----END PRIVATE KEY-----", "x = 1"];
+		const masked = maskLinesForDisplay(lines, { path: "key.pem" });
+		assert.strictEqual(masked.length, lines.length);
+		assert.strictEqual(masked[0], lines[0]);
+		assert.strictEqual(masked[3], lines[3]);
+		assert.strictEqual(masked[4], "x = 1");
+		assert.ok(!masked.join("\n").includes(body));
+	});
+
+	test("複数行の秘密鍵があっても、行継続の代入の値を伏せる(行ごとに伏せると漏れる)", () => {
+		const lines = [
+			'    Const PEM As String = "-----BEGIN RSA PRIVATE KEY-----" & vbCrLf &',
+			'        "MIIEowIBAAKCAQEAu1SU1LfVLPHCozMxH2Mo4lgOEePzNm0tRgeLezV6ffAt0gun" & vbCrLf &',
+			'        "VTLw7onLRnrq0/IzW7yWR7QkrmBL7jTKEn5u+qKhbwKfBstIs+bMY2Zkp18gnTxK" & vbCrLf &',
+			'        "-----END RSA PRIVATE KEY-----"',
+			"        Dim dbPassword As String = _",
+			'            "Hunter2Secret"',
+		];
+		const masked = maskLinesForDisplay(lines, { path: "Keys.vb" });
+		assert.strictEqual(masked.length, lines.length);
+		assert.ok(!masked.join("\n").includes("Hunter2Secret"), masked.join("\n"));
+		assert.ok(!masked.join("\n").includes("MIIEowIBAAKCAQEA"));
+	});
+
+	test("複数行にまたがる属性値を伏せる", () => {
+		const lines = ['  <add key="Mail" password="Hunter2', '     Secret" />', "</configuration>"];
+		const masked = maskLinesForDisplay(lines, { path: "App.config" });
+		assert.ok(!masked.join("\n").includes("Hunter2"));
+		assert.strictEqual(masked[2], "</configuration>");
+	});
+
+	test("1 行に収まった秘密鍵で、後ろの行の位置がずれない", () => {
+		const lines = [
+			'  key: "-----BEGIN PRIVATE KEY-----\\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASC\\n-----END PRIVATE KEY-----\\n"',
+			'  conn: "Server=db1;Password=Hunter2Secret"',
+		];
+		const masked = maskLinesForDisplay(lines, { path: "a.yaml" });
+		assert.strictEqual(masked.length, 2);
+		assert.strictEqual(masked[1], '  conn: "Server=db1;Password=[MASKED]"');
+	});
+
+	test("END のない BEGIN の行で、後ろを伏せない", () => {
+		const lines = ['Return s.StartsWith("-----BEGIN RSA PRIVATE KEY-----")', "Dim x = 1"];
+		assert.deepStrictEqual(maskLinesForDisplay(lines, { path: "Pem.vb" }), lines);
+	});
+
+	test(".vb は汎用テキストとしての伏せ方の範囲も伏せる(generic 構成の追加ディレクトリと同じ)", () => {
+		const lines = ["Module M", "    Private Const pass = 48291375", "End Module"];
+		assert.ok(!maskCredentials(lines.join("\n"), GENERIC).content.includes("48291375"));
+		assert.ok(!maskLinesForDisplay(lines, { path: "M.vb" }).join("\n").includes("48291375"));
+	});
+
+	test("伏せる範囲が非常に多いファイルでも止まらない", function () {
+		this.timeout(20000);
+		const lines: string[] = [];
+		for (let i = 0; i < 150000; i++) lines.push(`password=p${i}`);
+		const shown = maskLinesForDisplay(lines, { path: "a.txt", strict: false });
+		assert.strictEqual(shown.length, lines.length);
+		assert.strictEqual(shown[149999], "password=[MASKED]");
+	});
+
+	test("maskedValuesForDisplay は抜粋で伏せる元の値を返す", () => {
+		const lines = ['Dim pwd As String = "s3cret"', "x = 1", "pwd = Hunter2Secret"];
+		const values = maskedValuesForDisplay(lines, { path: "a.vb" });
+		assert.ok(values !== null);
+		assert.ok(values.includes("s3cret"), JSON.stringify(values));
+		assert.ok(values.includes("Hunter2Secret"), JSON.stringify(values));
+	});
+
+	test("strict のときは厳格でない伏せ方の範囲も伏せる", () => {
+		const lines = ['h = "Bearer Ab1Cd2Ef3Gh4Ij5Kl6Mn7Op8.sEcReTtAiLvAlUe"'];
+		assert.ok(!maskLinesForDisplay(lines, { path: "a.txt" }).join("").includes("sEcReT"));
+	});
+
+	test("strict: false では高エントロピー値を伏せない(--no-strict-mask)", () => {
+		const lines = ['Dim k = "Zx9Qw8Er7Ty6Ui5Op4As3Df2"'];
+		assert.ok(maskLinesForDisplay(lines, { path: "a.vb", strict: true })[0]?.includes("[MASKED]"));
+		assert.deepStrictEqual(maskLinesForDisplay(lines, { path: "a.vb", strict: false }), lines);
+	});
+});
