@@ -271,6 +271,47 @@ suite("buildErrorReport", () => {
 		assert.ok(report.includes("'UserName' は 'Account' のメンバーではありません。"), report);
 	});
 
+	test("伏せた値は、中の語がすべてほかの行で見えていても値ごと本文から伏せる", () => {
+		const form = [
+			"Partial Class FrmLogin",
+			'    Me.lblCity.Text = "Kyoto"',
+			'    Me.lblDept.Text = "Sales"',
+			'    Me.lblYear.Text = "2024"',
+			'    Me.txtPassword.Text = "Kyoto-Sales-2024"',
+			'    Dim password As String = "P@$$w0rd!23"',
+			"End Class",
+		];
+		const errors = [
+			{ origin: "C:\\src\\FrmLogin.vb", line: 5, code: "CA1303", message: 'リテラルを渡しています: "Kyoto-Sales-2024"' },
+			{ origin: "C:\\src\\FrmLogin.vb", line: 6, code: "CA1303", message: "リテラルを渡しています: 'P@$$w0rd!23'" },
+		];
+		const report = buildErrorReport(errors, "", { rootDir: "C:\\src", readLines: () => form, mask: { strict: true } });
+		assert.ok(!report.includes("Kyoto-Sales-2024"), report);
+		assert.ok(report.includes('リテラルを渡しています: "[MASKED]"'), report);
+		assert.ok(!report.includes("w0rd"), report);
+		assert.ok(report.includes("リテラルを渡しています: '[MASKED]'"), report);
+		assert.ok(report.includes('Me.lblCity.Text = "Kyoto"'), report);
+		// 値のあるファイルがパックから除外され、語だけがほかのファイルに見えている
+		const files: Record<string, string[]> = {
+			"C:\\src\\Secrets.vb": ["Module Secrets", '    Me.txtPassword.Text = "Kyoto-Sales-2024"', "End Module"],
+			"C:\\src\\Labels.vb": ["Module Labels", '    Dim a = "Kyoto", b = "Sales", c = "2024"', "End Module"],
+		};
+		const excluded = buildErrorReport(
+			[
+				{ origin: "C:\\src\\Secrets.vb", line: 2, code: "CA1303", message: 'リテラルを渡しています: "Kyoto-Sales-2024"' },
+				{ origin: "C:\\src\\Labels.vb", line: 2, code: "BC42024", message: "使われていない変数" },
+			],
+			"",
+			{
+				rootDir: "C:\\src",
+				readLines: (p) => files[p],
+				mask: { strict: true },
+				excludedBy: (p) => (p.endsWith("Secrets.vb") ? "C:\\src\\.gitignore" : undefined),
+			},
+		);
+		assert.ok(!excluded.includes("Kyoto-Sales-2024"), excluded);
+	});
+
 	test("generic の追加ディレクトリでない .vb は、パックと同じく VB のソースとしてだけ伏せる", () => {
 		const lines = ["Module M", "    Sub A()", "        user.Password = txtPasword.Text", "    End Sub", "End Module"];
 		const error = { origin: "C:\\src\\M.vb", line: 3, code: "BC30451", message: "'txtPasword' は宣言されていません。" };

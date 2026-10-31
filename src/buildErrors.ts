@@ -210,9 +210,9 @@ export function maskValues(text: string, values: string[]): string {
 }
 
 /**
- * エラーの本文から伏せる値の候補: 抜粋で伏せた値(3 文字以上)と、その中の語(3 文字以上。識別子として
- * 引用されることがあるため)。見えている値・語を除くのは、載せるエラーのファイルがそろってから
- * (filterVisible)
+ * エラーの本文から伏せる値の候補: 抜粋で伏せた値(3 文字以上)と、その中の語(3 文字以上。値の一部が
+ * 識別子として引用されることがあるため)。見えている値・語を除くのは、載せるエラーのファイルが
+ * そろってから(filterVisible)
  */
 interface MessageCandidates {
 	values: Set<string>;
@@ -221,10 +221,11 @@ interface MessageCandidates {
 
 function addCandidates(into: MessageCandidates, maskedValues: string[]): void {
 	for (const value of maskedValues) {
-		const words = (value.match(WORD) ?? []).filter((w) => w.length >= MIN_MESSAGE_VALUE_LENGTH);
-		for (const word of words) into.words.add(word);
-		// 3 文字以上の語を含む値は語の側で伏せる。語を含まない値(記号まじりの短い値など)だけ値ごと伏せる
-		if (value.length >= MIN_MESSAGE_VALUE_LENGTH && words.length === 0) into.values.add(value);
+		for (const word of value.match(WORD) ?? []) {
+			if (word.length >= MIN_MESSAGE_VALUE_LENGTH) into.words.add(word);
+		}
+		// 値は語ごとに見えていても、値そのものは伏せる(語がすべて別の場所に見えていても値は秘密)
+		if (value.length >= MIN_MESSAGE_VALUE_LENGTH) into.values.add(value);
 	}
 }
 
@@ -236,9 +237,14 @@ function filterVisible(candidates: MessageCandidates, visibleTexts: string[]): s
 	const visibleWords = new Set<string>();
 	for (const text of visibleTexts) for (const word of text.match(WORD) ?? []) visibleWords.add(word);
 	const out = [...candidates.words].filter((w) => !visibleWords.has(w));
-	// 値ごと伏せる候補は記号まじりの短いものだけなので、見えているかは文字列で確かめる
 	for (const value of candidates.values) {
-		if (!visibleTexts.some((t) => t.includes(value))) out.push(value);
+		// 見えていない語を含む値は、値そのものもまず見えていない(端の語が隣の文字と続いて別の語に見えて
+		// いるときだけは違うが、伏せる側に倒れるだけ)。文字列で探すのは、語がすべて見えている値と語を
+		// 含まない値だけにする(値の数 × 文面の長さの照合を減らす)
+		const words = value.match(WORD) ?? [];
+		if (words.some((w) => !visibleWords.has(w)) || !visibleTexts.some((t) => t.includes(value))) {
+			out.push(value);
+		}
 	}
 	return out;
 }

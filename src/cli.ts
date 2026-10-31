@@ -45,6 +45,7 @@ import {
 	type TaskResolution,
 } from "./procedureFile";
 import { maskCredentials } from "./services/credentialMasker";
+import { collectExtraRoots } from "./services/extraRootsCollector";
 import { GitignoreEvaluator } from "./services/gitignoreService";
 import { CONFIG_FILE_NAME, loadSlnmixConfig } from "./slnmixConfig";
 import {
@@ -353,16 +354,25 @@ function runBuild(
 						})(),
 					}
 				: {}),
-			// パックは generic の追加ディレクトリのファイルだけを汎用テキストとして伏せる(.vb も)
+			// パックは追加ディレクトリ(extraRoots)から集めたファイルだけを汎用テキストとして伏せる(.vb も)。
+			// 集め方はパックと同じ(include / exclude・常に除く場所)。.gitignore で除くファイルも数える
+			// (除くときは抜粋を載せないため、数えても伏せすぎにならない)。走査は .vb のエラーがあるときだけ
 			genericTextFor: (() => {
-				const roots = loadSlnmixConfig(rootDir, { readTextFile: readSourceTextFile }).config.extraRoots.map((r) =>
-					path.resolve(rootDir, r.path),
-				);
-				return (absolutePath: string) =>
-					roots.some((root) => {
-						const relative = path.relative(root, path.resolve(absolutePath));
-						return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
-					});
+				const key = (p: string): string => {
+					const resolved = path.resolve(p);
+					return process.platform === "win32" ? resolved.toLowerCase() : resolved;
+				};
+				let files: Set<string> | undefined;
+				return (absolutePath: string) => {
+					if (files === undefined) {
+						const roots = loadSlnmixConfig(rootDir, { readTextFile: readSourceTextFile }).config.extraRoots;
+						const collected = collectExtraRoots(rootDir, roots, {
+							listFilesRecursive: FS_DEPS.listFilesRecursive,
+						});
+						files = new Set(collected.files.map((f) => key(f.absolutePath)));
+					}
+					return files.has(key(absolutePath));
+				};
 			})(),
 			readLines: (absolutePath) => {
 				try {
