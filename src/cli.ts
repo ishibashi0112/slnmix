@@ -45,6 +45,7 @@ import {
 	type TaskResolution,
 } from "./procedureFile";
 import { maskCredentials } from "./services/credentialMasker";
+import { collectExtraRoots } from "./services/extraRootsCollector";
 import { GitignoreEvaluator } from "./services/gitignoreService";
 import { CONFIG_FILE_NAME, loadSlnmixConfig } from "./slnmixConfig";
 import {
@@ -160,6 +161,11 @@ const USAGE = `slnmix — .sln / .vbproj の論理構成に基づく repomix 互
       --configuration <name>
                         /p:Configuration に渡す構成(既定: ソリューションの既定)
       --no-clip         エラーの文面をクリップボードではなく標準出力へ出す
+      --no-mask         エラーの文面(抜粋・エラーの本文・ログの末尾・ファイルでない
+                        発生元)の認証情報の伏せ字([MASKED])を止める
+      --no-strict-mask  高エントロピー文字列の伏せ字だけを止める(パックと同じ)
+      --no-gitignore    .gitignore / .repomixignore で除外したファイルの抜粋も載せる
+                        (既定では、パックに入れないファイルの抜粋は載せない)
   -v, --version         バージョン表示
   -h, --help            このヘルプ
 
@@ -262,6 +268,29 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 /** ログの末尾(エラーの行を取り出せなかったときに文面へ載せる分) */
 const BUILD_LOG_TAIL_LINES = 40;
 
+/** .gitignore / .repomixignore の判定(パックと slnmix build で同じものを使う) */
+function createGitignoreEvaluator(rootDir: string): GitignoreEvaluator {
+	return new GitignoreEvaluator(
+		{
+			readTextFileIfExists: (absolutePath) => {
+				try {
+					return fs.readFileSync(absolutePath, "utf8");
+				} catch {
+					return undefined;
+				}
+			},
+			directoryExists: (absolutePath) => {
+				try {
+					return fs.statSync(absolutePath).isDirectory();
+				} catch {
+					return false;
+				}
+			},
+		},
+		rootDir,
+	);
+}
+
 /**
  * slnmix build: MSBuild でビルドし、失敗したらエラーと今のファイルの周辺行を
  * Copilot Chat に貼れる文面にしてクリップボードへ入れる(設計書 §22)
@@ -269,7 +298,14 @@ const BUILD_LOG_TAIL_LINES = 40;
 function runBuild(
 	targetPath: string,
 	rootDir: string,
-	options: { msbuild: string | undefined; configuration: string | undefined; clip: boolean },
+	options: {
+		msbuild: string | undefined;
+		configuration: string | undefined;
+		clip: boolean;
+		mask: { strict: boolean } | undefined;
+		/** .gitignore / .repomixignore を尊重するか(--no-gitignore で false) */
+		respectGitignore: boolean;
+	},
 ): number {
 	const located = locateMsbuild(options.msbuild, {
 		platform: process.platform,
@@ -309,8 +345,39 @@ function runBuild(
 		}
 		const report = buildErrorReport(errors, log.split(/\r?\n/).slice(-BUILD_LOG_TAIL_LINES).join("\n"), {
 			rootDir,
+			...(options.mask !== undefined ? { mask: options.mask } : {}),
+			...(options.respectGitignore
+				? {
+						excludedBy: (() => {
+							const gitignore = createGitignoreEvaluator(rootDir);
+							return (absolutePath: string) => gitignore.ignoreReasonFor(absolutePath);
+						})(),
+					}
+				: {}),
+			// パックは追加ディレクトリ(extraRoots)から集めたファイルだけを汎用テキストとして伏せる(.vb も)。
+			// 集め方はパックと同じ(include / exclude・常に除く場所)。.gitignore で除くファイルも数える
+			// (除くときは抜粋を載せないため、数えても伏せすぎにならない)。走査は .vb のエラーがあるときだけ
+			genericTextFor: (() => {
+				const key = (p: string): string => {
+					const resolved = path.resolve(p);
+					return process.platform === "win32" ? resolved.toLowerCase() : resolved;
+				};
+				let files: Set<string> | undefined;
+				return (absolutePath: string) => {
+					if (files === undefined) {
+						const roots = loadSlnmixConfig(rootDir, { readTextFile: readSourceTextFile }).config.extraRoots;
+						const collected = collectExtraRoots(rootDir, roots, {
+							listFilesRecursive: FS_DEPS.listFilesRecursive,
+						});
+						files = new Set(collected.files.map((f) => key(f.absolutePath)));
+					}
+					return files.has(key(absolutePath));
+				};
+			})(),
 			readLines: (absolutePath) => {
 				try {
+					// CRLF / LF で分ける(伏せる処理をパックと同じ区切りの文字列にかけるため)。単独の CR などは
+					// buildErrorReport がコンパイラーと同じ数え方で分ける
 					const lines = decodeSourceBuffer(fs.readFileSync(absolutePath)).split(/\r?\n/);
 					// 末尾の改行の後ろは行ではない
 					if (lines.length > 1 && lines[lines.length - 1] === "") {
@@ -689,6 +756,8 @@ function main(): number {
 			msbuild: values.msbuild,
 			configuration: values.configuration,
 			clip: !values["no-clip"],
+			mask: values["no-mask"] ? undefined : { strict: !values["no-strict-mask"] },
+			respectGitignore: !values["no-gitignore"],
 		});
 	}
 
@@ -780,25 +849,7 @@ function main(): number {
 	}
 
 	// .gitignore / .repomixignore の尊重(本家 repomix と同じ既定挙動)
-	const gitignore = new GitignoreEvaluator(
-		{
-			readTextFileIfExists: (absolutePath) => {
-				try {
-					return fs.readFileSync(absolutePath, "utf8");
-				} catch {
-					return undefined;
-				}
-			},
-			directoryExists: (absolutePath) => {
-				try {
-					return fs.statSync(absolutePath).isDirectory();
-				} catch {
-					return false;
-				}
-			},
-		},
-		rootDir,
-	);
+	const gitignore = createGitignoreEvaluator(rootDir);
 
 	// パック本文を先に組み立てる。手順文の「自動テスト」の節は、実際に出力する
 	// ファイル一覧(と extraRoots の kind)から有無を判定するため(autoTests.ts)

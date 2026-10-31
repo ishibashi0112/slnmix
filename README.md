@@ -23,10 +23,14 @@ DependentUpon 解決済み)に基づいてエクスポートします。
 - 文字コードを自動判定(BOM / UTF-8 / Shift_JIS(CP932))して UTF-8 に統一
 - 認証情報らしき値(`Password=` / APIキー等)を既定で `[MASKED]` に自動置換
   (`パスワード` / `ﾊﾟｽﾜｰﾄﾞ` 等の日本語変数名・キー名、メソッド引数
-  `Login("...", "...")`、UI サマリー生成前の Designer ソースにも適用)
+  `Login("...", "...")`、UI サマリー生成前の Designer ソースにも適用)。
+  設定ファイルの appSettings(`<add key="DbPassword" value="..." />`)・My.Settings・
+  JSON の `"password": "..."`・`DB_PASSWORD=...` の値も伏せる(v0.22.2〜)
 - 既定で厳格モード: ランダムな英数字列(高エントロピー値)も機械的にマスク
   (`--no-strict-mask` で無効化)。出力ヘッダーには AI 向けに
-  「[MASKED] は伏せ字」であることと取り扱いの指示を明記
+  「[MASKED] は伏せ字」であることと取り扱いの指示を明記。`slnmix build` のエラーの
+  文面も同じ規則で伏せる(v0.22.2〜)。petari 0.14.0 以降は、回答で `[MASKED]` を含む行を
+  一字も変えずに残した場合だけ元の値に戻して書き込み、書き換えた・足した場合は止める
 - `.gitignore` / `.repomixignore` を尊重(本家 repomix と同じ挙動)
 - Designer 関連・`.resx` は既定で除外(オプションで含められる)
 - 除外した `*.Designer.vb` は **UI サマリー**として要約を自動埋め込み(下記)
@@ -412,6 +416,9 @@ changes.md を書けます(パックを作った後に petari で書き換わっ
   .NET Framework 4 の MSBuild の順に探します。Windows 以外では `--msbuild` が必要です
 - エラーは MSBuild のファイルロガー(エラーのみ・UTF-8)から取り出すので、コンソールの
   文字コードに左右されません。載せるのは先頭 20 件までです
+- 抜粋・エラーの本文・ログの末尾は、パックと同じ規則で認証情報を `[MASKED]` に伏せます
+  (v0.22.2〜。`--no-mask` / `--no-strict-mask` はパックと同じ)。`.gitignore` /
+  `.repomixignore` でパックから除外しているファイルは、抜粋を載せません(`--no-gitignore` で載せる)
 - `build` という名前のフォルダを入力にするときは `./build` と書いてください
 
 ## petari 連携(規約文の自動付与)
