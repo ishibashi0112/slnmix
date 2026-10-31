@@ -337,6 +337,16 @@ function maskVbSource(
 	strict: boolean,
 ): string {
 	let out = "";
+	// 直前のコード(out の末尾)の控え。out を毎回切り出すと、大きいファイルで
+	// 文字列全体の複製が文字列リテラルごとに起きて遅くなるため
+	let recent = "";
+	const emit = (piece: string): void => {
+		out += piece;
+		recent += piece;
+		if (recent.length > 400) {
+			recent = recent.slice(-200);
+		}
+	};
 	let i = 0;
 	const n = content.length;
 
@@ -366,7 +376,7 @@ function maskVbSource(
 
 			// 直前のコードが「秘密系変数 = 」「秘密系の名前付き引数 :=」
 			// 「秘密系メソッドの引数」ならリテラル全体をマスク
-			const tail = out.slice(-200);
+			const tail = recent.slice(-200);
 			let kind: string | undefined;
 			if (closed && inner.trim() !== "") {
 				const assignMatch = ASSIGNMENT_TAIL.exec(tail);
@@ -383,7 +393,7 @@ function maskVbSource(
 			}
 			if (kind !== undefined) {
 				findings.push({ line: lineOf(content, i), kind });
-				out += `"${MASK}"`;
+				emit(`"${MASK}"`);
 				i = j + 1;
 				continue;
 			}
@@ -397,7 +407,7 @@ function maskVbSource(
 					lineOf(content, i),
 				);
 			}
-			out += `"${maskedInner}${closed ? '"' : ""}`;
+			emit(`"${maskedInner}${closed ? '"' : ""}`);
 			i = closed ? j + 1 : j;
 			continue;
 		}
@@ -408,17 +418,14 @@ function maskVbSource(
 			while (j < n && content[j] !== "\n") {
 				j += 1;
 			}
-			out += maskCommentText(
-				content.slice(i, j),
-				findings,
-				lineOf(content, i),
-				strict,
+			emit(
+				maskCommentText(content.slice(i, j), findings, lineOf(content, i), strict),
 			);
 			i = j;
 			continue;
 		}
 
-		out += ch;
+		emit(ch);
 		i += 1;
 	}
 	return out;

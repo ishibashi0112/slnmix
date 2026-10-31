@@ -160,8 +160,8 @@ const USAGE = `slnmix — .sln / .vbproj の論理構成に基づく repomix 互
       --configuration <name>
                         /p:Configuration に渡す構成(既定: ソリューションの既定)
       --no-clip         エラーの文面をクリップボードではなく標準出力へ出す
-      --no-mask         エラーの文面(抜粋・エラーの本文・ログの末尾)の認証情報の
-                        伏せ字([MASKED])を止める
+      --no-mask         エラーの文面(抜粋・エラーの本文・ログの末尾・ファイルでない
+                        発生元)の認証情報の伏せ字([MASKED])を止める
       --no-strict-mask  高エントロピー文字列の伏せ字だけを止める(パックと同じ)
       --no-gitignore    .gitignore / .repomixignore で除外したファイルの抜粋も載せる
                         (既定では、パックに入れないファイルの抜粋は載せない)
@@ -267,10 +267,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 /** ログの末尾(エラーの行を取り出せなかったときに文面へ載せる分) */
 const BUILD_LOG_TAIL_LINES = 40;
 
-/**
- * slnmix build: MSBuild でビルドし、失敗したらエラーと今のファイルの周辺行を
- * Copilot Chat に貼れる文面にしてクリップボードへ入れる(設計書 §22)
- */
 /** .gitignore / .repomixignore の判定(パックと slnmix build で同じものを使う) */
 function createGitignoreEvaluator(rootDir: string): GitignoreEvaluator {
 	return new GitignoreEvaluator(
@@ -294,6 +290,10 @@ function createGitignoreEvaluator(rootDir: string): GitignoreEvaluator {
 	);
 }
 
+/**
+ * slnmix build: MSBuild でビルドし、失敗したらエラーと今のファイルの周辺行を
+ * Copilot Chat に貼れる文面にしてクリップボードへ入れる(設計書 §22)
+ */
 function runBuild(
 	targetPath: string,
 	rootDir: string,

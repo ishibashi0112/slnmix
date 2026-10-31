@@ -164,6 +164,22 @@ suite("buildErrorReport", () => {
 		assert.ok(!report.includes("Hunter2"), report);
 	});
 
+	test("パスに見える発生元でも、ファイルとして読めなければ伏せる", () => {
+		const report = buildErrorReport(
+			[
+				{
+					origin: "Data Source=.\\SQLEXPRESS;User ID=sa;Password=Hunter2",
+					code: "DB0001",
+					message: "x",
+					project: "C:\\src\\App.vbproj",
+				},
+			],
+			"",
+			{ rootDir: "C:\\src", readLines: () => undefined, mask: { strict: true } },
+		);
+		assert.ok(!report.includes("Hunter2"), report);
+	});
+
 	test(".gitignore でパックから除外しているファイルの抜粋は載せない", () => {
 		const secret = ['    Public Const DB_PW As String = "Hunter2Pw"', "    Opn()"];
 		const report = buildErrorReport(

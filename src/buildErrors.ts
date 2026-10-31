@@ -6,7 +6,7 @@
  * 修正を頼める文面にする。各エラーには今の実ファイルの周辺行を付ける
  * (パックを作った後に petari で書き換わっていることが多く、AI が古い内容で
  * SEARCH を書くと petari の適用に失敗するため)。
- * 抜粋・エラーの本文・ログの末尾・ファイル名のないエラーの発生元は、パックと同じ規則で
+ * 抜粋・エラーの本文・ログの末尾・ファイルとして読めないエラーの発生元は、パックと同じ規則で
  * 認証情報らしき値を [MASKED] に伏せる (この文面も AI に貼るため。v0.22.2)。抜粋はファイル全体を
  * 伏せてから切り出し (行の位置は元のまま)、パックが .gitignore で除外するファイルの抜粋は載せない。
  */
@@ -197,10 +197,13 @@ export function buildErrorReport(
 	const shown = errors.slice(0, maxErrors);
 	shown.forEach((error, index) => {
 		const file = resolveErrorFile(error);
-		const where =
+		const lines = file === undefined ? undefined : linesOf(file);
+		const located =
 			file === undefined
-				? maskText(error.origin)
+				? error.origin
 				: `${displayPath(file, options.rootDir)}${error.line !== undefined ? `:${error.line}` : ""}`;
+		// 読めるファイルのパスはそのまま。ファイルでない発生元(パスに見える接続文字列など)は伏せる
+		const where = lines === undefined ? maskText(located) : located;
 		parts.push("", `### ${index + 1}. ${where} — ${error.code}`, maskText(error.message));
 		if (file === undefined || error.line === undefined) {
 			return;
@@ -209,7 +212,6 @@ export function buildErrorReport(
 			parts.push("", "(.gitignore / .repomixignore でパックから除外しているファイルのため、抜粋は載せません)");
 			return;
 		}
-		const lines = linesOf(file);
 		if (lines === undefined || error.line > lines.length) {
 			parts.push("", "(ファイルを読めなかったため抜粋はありません)");
 			return;
