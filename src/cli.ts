@@ -160,8 +160,11 @@ const USAGE = `slnmix — .sln / .vbproj の論理構成に基づく repomix 互
       --configuration <name>
                         /p:Configuration に渡す構成(既定: ソリューションの既定)
       --no-clip         エラーの文面をクリップボードではなく標準出力へ出す
-      --no-mask / --no-strict-mask
-                        パックと同じく、抜粋の認証情報の伏せ字を止める
+      --no-mask         エラーの文面(抜粋・エラーの本文・ログの末尾)の認証情報の
+                        伏せ字([MASKED])を止める
+      --no-strict-mask  高エントロピー文字列の伏せ字だけを止める(パックと同じ)
+      --no-gitignore    .gitignore / .repomixignore で除外したファイルの抜粋も載せる
+                        (既定では、パックに入れないファイルの抜粋は載せない)
   -v, --version         バージョン表示
   -h, --help            このヘルプ
 
@@ -268,6 +271,29 @@ const BUILD_LOG_TAIL_LINES = 40;
  * slnmix build: MSBuild でビルドし、失敗したらエラーと今のファイルの周辺行を
  * Copilot Chat に貼れる文面にしてクリップボードへ入れる(設計書 §22)
  */
+/** .gitignore / .repomixignore の判定(パックと slnmix build で同じものを使う) */
+function createGitignoreEvaluator(rootDir: string): GitignoreEvaluator {
+	return new GitignoreEvaluator(
+		{
+			readTextFileIfExists: (absolutePath) => {
+				try {
+					return fs.readFileSync(absolutePath, "utf8");
+				} catch {
+					return undefined;
+				}
+			},
+			directoryExists: (absolutePath) => {
+				try {
+					return fs.statSync(absolutePath).isDirectory();
+				} catch {
+					return false;
+				}
+			},
+		},
+		rootDir,
+	);
+}
+
 function runBuild(
 	targetPath: string,
 	rootDir: string,
@@ -276,6 +302,8 @@ function runBuild(
 		configuration: string | undefined;
 		clip: boolean;
 		mask: { strict: boolean } | undefined;
+		/** .gitignore / .repomixignore を尊重するか(--no-gitignore で false) */
+		respectGitignore: boolean;
 	},
 ): number {
 	const located = locateMsbuild(options.msbuild, {
@@ -317,6 +345,14 @@ function runBuild(
 		const report = buildErrorReport(errors, log.split(/\r?\n/).slice(-BUILD_LOG_TAIL_LINES).join("\n"), {
 			rootDir,
 			...(options.mask !== undefined ? { mask: options.mask } : {}),
+			...(options.respectGitignore
+				? {
+						excludedBy: (() => {
+							const gitignore = createGitignoreEvaluator(rootDir);
+							return (absolutePath: string) => gitignore.ignoreReasonFor(absolutePath);
+						})(),
+					}
+				: {}),
 			readLines: (absolutePath) => {
 				try {
 					const lines = decodeSourceBuffer(fs.readFileSync(absolutePath)).split(/\r?\n/);
@@ -698,6 +734,7 @@ function main(): number {
 			configuration: values.configuration,
 			clip: !values["no-clip"],
 			mask: values["no-mask"] ? undefined : { strict: !values["no-strict-mask"] },
+			respectGitignore: !values["no-gitignore"],
 		});
 	}
 
@@ -789,25 +826,7 @@ function main(): number {
 	}
 
 	// .gitignore / .repomixignore の尊重(本家 repomix と同じ既定挙動)
-	const gitignore = new GitignoreEvaluator(
-		{
-			readTextFileIfExists: (absolutePath) => {
-				try {
-					return fs.readFileSync(absolutePath, "utf8");
-				} catch {
-					return undefined;
-				}
-			},
-			directoryExists: (absolutePath) => {
-				try {
-					return fs.statSync(absolutePath).isDirectory();
-				} catch {
-					return false;
-				}
-			},
-		},
-		rootDir,
-	);
+	const gitignore = createGitignoreEvaluator(rootDir);
 
 	// パック本文を先に組み立てる。手順文の「自動テスト」の節は、実際に出力する
 	// ファイル一覧(と extraRoots の kind)から有無を判定するため(autoTests.ts)

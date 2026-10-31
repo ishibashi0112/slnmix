@@ -5,7 +5,7 @@
  */
 
 import * as assert from "assert";
-import { maskCredentials, maskLines } from "../services/credentialMasker";
+import { maskCredentials, maskLinesForDisplay } from "../services/credentialMasker";
 
 const VB = { vbSource: true };
 const GENERIC = { vbSource: false };
@@ -293,19 +293,72 @@ suite("credentialMasker: 高エントロピー値(厳格モード)", () => {
 });
 
 
-suite("credentialMasker: maskLines(行の位置を保つ)", () => {
+suite("credentialMasker: maskLinesForDisplay(行の位置を保つ抜粋用)", () => {
 	test("行数を変えずに伏せる", () => {
 		const lines = ['Dim pwd As String = "s3cret"', "Open(pwd)"];
-		assert.deepStrictEqual(maskLines(lines, VB), ['Dim pwd As String = "[MASKED]"', "Open(pwd)"]);
+		assert.deepStrictEqual(maskLinesForDisplay(lines, { path: "a.vb" }), [
+			'Dim pwd As String = "[MASKED]"',
+			"Open(pwd)",
+		]);
 	});
 
-	test("秘密鍵のブロックは本文を 1 行ずつ伏せる(行数は変えない)", () => {
+	test("秘密鍵のブロックは本文を伏せ、行数と前後の行を変えない", () => {
 		const body = "MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7";
 		const lines = ["-----BEGIN PRIVATE KEY-----", body, body, "-----END PRIVATE KEY-----", "x = 1"];
-		const masked = maskLines(lines, GENERIC);
+		const masked = maskLinesForDisplay(lines, { path: "key.pem" });
 		assert.strictEqual(masked.length, lines.length);
 		assert.strictEqual(masked[0], lines[0]);
+		assert.strictEqual(masked[3], lines[3]);
 		assert.strictEqual(masked[4], "x = 1");
 		assert.ok(!masked.join("\n").includes(body));
+	});
+
+	test("複数行の秘密鍵があっても、行継続の代入の値を伏せる(行ごとに伏せると漏れる)", () => {
+		const lines = [
+			'    Const PEM As String = "-----BEGIN RSA PRIVATE KEY-----" & vbCrLf &',
+			'        "MIIEowIBAAKCAQEAu1SU1LfVLPHCozMxH2Mo4lgOEePzNm0tRgeLezV6ffAt0gun" & vbCrLf &',
+			'        "VTLw7onLRnrq0/IzW7yWR7QkrmBL7jTKEn5u+qKhbwKfBstIs+bMY2Zkp18gnTxK" & vbCrLf &',
+			'        "-----END RSA PRIVATE KEY-----"',
+			"        Dim dbPassword As String = _",
+			'            "Hunter2Secret"',
+		];
+		const masked = maskLinesForDisplay(lines, { path: "Keys.vb" });
+		assert.strictEqual(masked.length, lines.length);
+		assert.ok(!masked.join("\n").includes("Hunter2Secret"), masked.join("\n"));
+		assert.ok(!masked.join("\n").includes("MIIEowIBAAKCAQEA"));
+	});
+
+	test("複数行にまたがる属性値を伏せる", () => {
+		const lines = ['  <add key="Mail" password="Hunter2', '     Secret" />', "</configuration>"];
+		const masked = maskLinesForDisplay(lines, { path: "App.config" });
+		assert.ok(!masked.join("\n").includes("Hunter2"));
+		assert.strictEqual(masked[2], "</configuration>");
+	});
+
+	test("1 行に収まった秘密鍵で、後ろの行の位置がずれない", () => {
+		const lines = [
+			'  key: "-----BEGIN PRIVATE KEY-----\\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASC\\n-----END PRIVATE KEY-----\\n"',
+			'  conn: "Server=db1;Password=Hunter2Secret"',
+		];
+		const masked = maskLinesForDisplay(lines, { path: "a.yaml" });
+		assert.strictEqual(masked.length, 2);
+		assert.strictEqual(masked[1], '  conn: "Server=db1;Password=[MASKED]"');
+	});
+
+	test("END のない BEGIN の行で、後ろを伏せない", () => {
+		const lines = ['Return s.StartsWith("-----BEGIN RSA PRIVATE KEY-----")', "Dim x = 1"];
+		assert.deepStrictEqual(maskLinesForDisplay(lines, { path: "Pem.vb" }), lines);
+	});
+
+	test(".vb は汎用テキストとしての伏せ方の範囲も伏せる(generic 構成の追加ディレクトリと同じ)", () => {
+		const lines = ["Module M", "    Private Const pass = 48291375", "End Module"];
+		assert.ok(!maskCredentials(lines.join("\n"), GENERIC).content.includes("48291375"));
+		assert.ok(!maskLinesForDisplay(lines, { path: "M.vb" }).join("\n").includes("48291375"));
+	});
+
+	test("strict: false では高エントロピー値を伏せない(--no-strict-mask)", () => {
+		const lines = ['Dim k = "Zx9Qw8Er7Ty6Ui5Op4As3Df2"'];
+		assert.ok(maskLinesForDisplay(lines, { path: "a.vb", strict: true })[0]?.includes("[MASKED]"));
+		assert.deepStrictEqual(maskLinesForDisplay(lines, { path: "a.vb", strict: false }), lines);
 	});
 });

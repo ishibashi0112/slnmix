@@ -155,6 +155,49 @@ suite("buildErrorReport", () => {
 		assert.ok(!tail.includes("p@ss"), tail);
 	});
 
+	test("ファイル名のないエラーの発生元も伏せる", () => {
+		const report = buildErrorReport(
+			[{ origin: "Data Source=db1;User ID=sa;Password=Hunter2", code: "DB0001", message: "接続に失敗しました" }],
+			"",
+			{ rootDir: "C:\\src", readLines, mask: { strict: true } },
+		);
+		assert.ok(!report.includes("Hunter2"), report);
+	});
+
+	test(".gitignore でパックから除外しているファイルの抜粋は載せない", () => {
+		const secret = ['    Public Const DB_PW As String = "Hunter2Pw"', "    Opn()"];
+		const report = buildErrorReport(
+			[{ origin: "C:\\src\\DbConfig.vb", line: 2, code: "BC30451", message: "'Opn' は宣言されていません。" }],
+			"",
+			{
+				rootDir: "C:\\src",
+				readLines: () => secret,
+				mask: { strict: true },
+				excludedBy: (p) => (p.endsWith("DbConfig.vb") ? "C:\\src\\.gitignore" : undefined),
+			},
+		);
+		assert.ok(!report.includes("Hunter2Pw"), report);
+		assert.ok(report.includes("パックから除外しているファイルのため"), report);
+	});
+
+	test("同じファイルのエラーが続いても、ファイルは 1 回だけ読んで伏せる", () => {
+		let reads = 0;
+		const report = buildErrorReport(
+			[1, 2, 3].map((line) => ({ origin: "C:\\src\\A.vb", line, code: "BC1", message: "x" })),
+			"",
+			{
+				rootDir: "C:\\src",
+				readLines: () => {
+					reads += 1;
+					return ["a", "b", "c"];
+				},
+				mask: { strict: true },
+			},
+		);
+		assert.strictEqual(reads, 1);
+		assert.ok(report.includes("### 3."));
+	});
+
 	test("mask 省略時(--no-mask)は伏せない", () => {
 		const report = buildErrorReport(
 			[{ origin: "C:\\src\\App\\A.vb", line: 6, code: "BC1", message: "Password=p@ss" }],

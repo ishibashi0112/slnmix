@@ -6,12 +6,13 @@
  * 修正を頼める文面にする。各エラーには今の実ファイルの周辺行を付ける
  * (パックを作った後に petari で書き換わっていることが多く、AI が古い内容で
  * SEARCH を書くと petari の適用に失敗するため)。
- * 抜粋・エラーの本文・ログの末尾は、パックと同じ規則で認証情報らしき値を [MASKED] に伏せる
- * (この文面も AI に貼るため。v0.22.2)。
+ * 抜粋・エラーの本文・ログの末尾・ファイル名のないエラーの発生元は、パックと同じ規則で
+ * 認証情報らしき値を [MASKED] に伏せる (この文面も AI に貼るため。v0.22.2)。抜粋はファイル全体を
+ * 伏せてから切り出し (行の位置は元のまま)、パックが .gitignore で除外するファイルの抜粋は載せない。
  */
 
 import * as path from "path";
-import { maskCredentials, maskLines } from "./services/credentialMasker";
+import { maskCredentials, maskLinesForDisplay } from "./services/credentialMasker";
 
 export interface BuildError {
 	/** ファイルのパス(MSBuild が出したまま)、またはツール名(vbc / MSBUILD 等) */
@@ -120,6 +121,11 @@ export interface BuildErrorReportOptions {
 	 * 省略時は伏せない(--no-mask)
 	 */
 	mask?: { strict: boolean };
+	/**
+	 * パックが除外するファイル (.gitignore / .repomixignore) なら、根拠の ignore ファイルを返す。
+	 * そのファイルの抜粋は載せない (認証情報を置くファイルを除外していることが多いため)
+	 */
+	excludedBy?(absolutePath: string): string | undefined;
 }
 
 const DEFAULT_MAX_ERRORS = 20;
@@ -174,25 +180,41 @@ export function buildErrorReport(
 		parts.push("", "エラーの行を取り出せませんでした。ビルドのログの末尾を載せます。", "", "```", maskText(logTail.trimEnd()), "```");
 		return parts.join("\n") + "\n";
 	}
+	// 同じファイルのエラーが続くことが多いので、伏せた行はファイルごとに 1 回だけ作る
+	const maskedFiles = new Map<string, string[] | undefined>();
+	const linesOf = (file: string): string[] | undefined => {
+		if (!maskedFiles.has(file)) {
+			const lines = options.readLines(file);
+			maskedFiles.set(
+				file,
+				lines === undefined || mask === undefined
+					? lines
+					: maskLinesForDisplay(lines, { path: file, strict: mask.strict }),
+			);
+		}
+		return maskedFiles.get(file);
+	};
 	const shown = errors.slice(0, maxErrors);
 	shown.forEach((error, index) => {
 		const file = resolveErrorFile(error);
 		const where =
 			file === undefined
-				? error.origin
+				? maskText(error.origin)
 				: `${displayPath(file, options.rootDir)}${error.line !== undefined ? `:${error.line}` : ""}`;
 		parts.push("", `### ${index + 1}. ${where} — ${error.code}`, maskText(error.message));
 		if (file === undefined || error.line === undefined) {
 			return;
 		}
-		const lines = options.readLines(file);
+		if (options.excludedBy?.(file) !== undefined) {
+			parts.push("", "(.gitignore / .repomixignore でパックから除外しているファイルのため、抜粋は載せません)");
+			return;
+		}
+		const lines = linesOf(file);
 		if (lines === undefined || error.line > lines.length) {
 			parts.push("", "(ファイルを読めなかったため抜粋はありません)");
 			return;
 		}
-		const shownLines =
-			mask === undefined ? lines : maskLines(lines, { vbSource: /\.vb$/i.test(file), strict: mask.strict });
-		parts.push("", "```" + fenceLanguage(file), ...renderExcerpt(shownLines, error.line, context), "```");
+		parts.push("", "```" + fenceLanguage(file), ...renderExcerpt(lines, error.line, context), "```");
 	});
 	if (errors.length > shown.length) {
 		parts.push("", `(ほかに ${errors.length - shown.length} 件のエラーは省略しました)`);
