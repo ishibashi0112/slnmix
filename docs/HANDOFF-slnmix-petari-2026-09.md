@@ -134,6 +134,7 @@ Repo/
 | P2 | petari: 目録による警告（任意） | petari | 4 | 低 |
 | W | workbench 凍結の明文化、slnmix CLAUDE.md 更新 | slnmix / workbench | なし | フェーズ 1 と同時 |
 | 6 | docs/ 連携（設計書・仕様書・引継ぎ書）、モード自動選択、`design` モード、内蔵ひな型、`--init-docs`（§18） | slnmix | 1.5 | 高（2026-09-15 追加、v0.14.0 で実装） |
+| M | slnmix と petari の統合(§25。M1〜M4) | petari(+ slnmix の互換パッケージ) | 会社 PC での確認 | 案(2026-10-31 追加) |
 
 フェーズ 1 だけでも効果がある。フェーズ 4 は上限測定の結果、不要と判断される可能性がある（その場合は着手しない）。
 
@@ -942,3 +943,115 @@ Claude Code / Codex をセキュリティ上の理由で導入できない企業
 - 画面に出たことの照合(人がメモで伝える。画面の自動操作は自動テスト = webview2-bridge-test の受け持ち)
 - 値を伏せた結果(テスト用 DB の値を Copilot に貼れない会社向け。計画書 §6 の 5 の回答待ち)
 - 照合の結果を次のパックへ自動で入れること(貼る運用。計画書 §4-3 の任意項目)
+
+## 25. slnmix と petari の統合と言語汎用化(2026-10-31 追加、設計案。実装は会社 PC での確認の後)
+
+状態: **案**。§25.8 の「決めてほしいこと」に答えが出たら §17 に記録し、ここを確定版に直す。
+
+### 25.1 狙い
+
+利用者から見ると、1 本の流れ(パックを作る → AI に渡す → 返答を当てる → ビルドする)に 2 つの名前がある。日常の操作は `npx slnmix` / `npx slnmix build` と `npx petari` / `npx petari watch` / `npx petari undo` に分かれ、初回の `npx slnmix init` は中で `petari init` を呼んでいる。作り手の側では、同じものを 2 か所で持っている。
+
+| 二重になっているもの | slnmix | petari |
+|---|---|---|
+| AI への指示 | 手順文(内蔵、v9) | 規約文(ルートに `protocol.md` として書き出す、v4)。更新には `petari init` の再実行が要る |
+| 設定 | `slnmix.config.json`(リポジトリにコミット) | `.petari/config.json`(.gitignore 済み) |
+| ルートの決め方 | `--root` > 上に向かって最初の `slnmix.config.json`(`.git` より上には行かない)> 入力のある場所 | `--root` > 上に向かって最初の `.git` > カレント |
+| Shift_JIS の読み取り | iconv-lite(cp932) | Node の `TextDecoder("shift_jis")` + 自前の変換表 |
+| クリップボード | `src/clipboard.ts`(書くだけ) | `src/infra/clipboard.ts`(読み書き。Windows の書き方は同じ) |
+| テスト・ビルド | CommonJS、mocha + tsc、Node 18.11 以上 | ESM、vitest + Node のネイティブ TS、Node 20.19 以上 |
+
+版のずれも実際に起きた(slnmix 0.22.0 は `petari ^0.11.0` のままで、`slnmix init` が 0.11.0 で規約文を書いていた。0.22.1 で解消)。統合すると、利用者は 1 つの名前だけを覚えればよく、作り手は 1 か所だけを直せばよくなる。
+
+あわせて、VB.NET 以外でも使えるツールにする(利用者の希望、2026-10-28)。ただし言語汎用化は統合とは別の段に分ける(§25.7)。統合の段では利用者に見える挙動を変えない。
+
+### 25.2 統合後の形
+
+名前は **petari** に寄せる(案)。理由:
+
+- slnmix は `.sln` から来た名前で、言語に依存しないツールの名前としては誤解を招く
+- petari はもともと言語に依存しない(VB 固有なのは .vbproj への自動登録だけ)
+- 「実行時依存ゼロ」の方針を持っているのは petari 側で、導入審査の説明が一番短くなる(§25.3-3)
+
+| 今 | 統合後 | 備考 |
+|---|---|---|
+| `npx slnmix init` | `npx petari init` | slnmix init の中身(構成の判定・docs/・.gitignore)と petari init の中身(.petari/config.json・.gitignore)を 1 つにする。対話なし。repomix.config.json は作らない(`petari pack` が本家 repomix の代わりになる)。`--yes` / `--no-repomix` は受け付けて無視(旧 slnmix から呼ばれるため) |
+| `npx slnmix [入力] [オプション]` | `npx petari pack [入力] [オプション]` | オプションは同じ名前で全部引き継ぐ(`--task` / `--mode` / `--init-docs` / `--print-procedure` など) |
+| `npx slnmix build` | `npx petari build` | 同じ |
+| `npx petari` / `watch` / `undo` / `show` / `list` / `protocol` | 変わらない | 引数なしの `petari` は今までどおり「適用」 |
+
+`pack` を既定(引数なし)にしないのは、`npx petari` が今「ダウンロードした changes.md を当てる」意味で使われているため。
+
+slnmix のパッケージは「petari を呼ぶだけ」の互換パッケージとして残す(§25.4 の M4)。`slnmix` → `petari pack`、`slnmix init` → `petari init`、`slnmix build` → `petari build` に引数をそのまま渡し、統合を知らせる 1 行を標準エラーに出す。しばらく残したあと `npm deprecate` する。
+
+ashiato は統合しない。DB の資格情報とドライバー(mssql / oracledb)を扱うため、信頼の境界も依存も別にしておく方がよい。
+
+### 25.3 設計の要点
+
+1. **規約文を内蔵にする。** 規約文(petari)と手順文(slnmix)が同じパッケージに入るので、パックの `<instruction>` は内蔵の規約文から直接作れる。`protocol.md` は手順文の `procedure.md` と同じく「置いたときだけ使う上書き」にする。これで規約文を変えても `init` の再実行が要らなくなり、版のずれが起きなくなる。既存の `protocol.md` は、1 行目の版(`<!-- petari protocol vN -->`)と本文が内蔵の第 N 版と一字一句同じなら「手を加えていない」とみなして内蔵の最新版を使い、削除してよいと 1 行案内する。違えば上書きとして使い、内蔵より古い版なら警告する(どちらも機械的な比較で、推測はしない。比べるために過去の版のハッシュを内蔵する)
+2. **設定とルート。** リポジトリにコミットする設定(構成・extraRoots・target)と、PC ごとの設定(Downloads の場所・VS Code のパス・履歴の上限)は分けたままにする。前者は `petari.config.json` を新しい名前とし、`slnmix.config.json` も読み続ける(両方あればエラー)。後者は `.petari/config.json` のまま。ルートは「`--root` > 上に向かって最初の設定ファイル(`.git` より上には行かない)> 上に向かって最初の `.git` > カレント」に統一する。今は設定ファイルをサブフォルダに置いた構成でだけ、パックのルート(サブフォルダ)と適用のルート(`.git` の場所)がずれ得る。統一するとパックの `<file path>` と changes.md のパスの基準が必ず一致する
+3. **実行時依存ゼロを守る(案)。** slnmix の 3 つの依存を置き換える
+   - iconv-lite → petari の `decodeFile` 系(`TextDecoder`)。パックと適用で同じデコーダーを使うことになり、AI が見る文字と petari が照合する文字が必ず同じになる。2026-10-31 に全 1 バイト・2 バイトの組(11,536 通り)で両者を比べた結果、違いは (a) 不正なバイト列での置換文字の数、(b) 0xF9 で始まる外字 187 字(iconv-lite は置換文字、TextDecoder は私用領域の文字)、(c) 1 バイトの 0x1A / 0x1C / 0x7F / 0x80 の扱い、の 3 種だけだった。普通の日本語のソースでは出力は変わらない。(b) は今「パックでは置換文字、適用では外字」とずれているので、統一でむしろ直る
+   - ignore → 自前の `.gitignore` パターン照合(否定 `!`、末尾 `/`、先頭 `/`、`**`、`*`、`?`、文字クラス)。テストでは同じパターンを `git check-ignore` にもかけて結果が一致することを確かめる。git の無い場所でも動き、`.repomixignore` も今までどおり読める
+   - fast-xml-parser → 自前の XML 読み取り(要素・属性・テキスト・コメント・CDATA・処理命令・実体参照)。今 vbprojParser が受け取っている形(属性は `@_` 接頭辞、名前空間の接頭辞を外す、値は文字列のまま、前後の空白を落とす)と同じ形を返し、vbprojParser 自体は変えない。壊れた XML の診断の文面だけは変わる
+   - 置き換える代わりに fast-xml-parser と ignore を petari の依存に加える選択肢もある(§25.8)。その場合、導入審査の説明は「依存 9 パッケージ」(fast-xml-parser とその依存 7 つ、ignore)になる
+4. **出力の互換。** 統合の段(M1〜M3)では、ツール名の行を除いてパックと本文用テキストがバイト単位で今と同じであることを完了条件にする。ツール名は「slnmix が…まとめたもの」「slnmix 出力」「`<!-- slnmix procedure v9 -->`」などで、petari に変える。利用者のリポジトリに書かれている設計書の状態行 `<!-- slnmix design: status=... -->` は文字列を変えない(利用者のファイルを書き換えずに済むように。読み取りは今の書式のまま続ける)。出力ファイル名(`repomix-output.xml` / `.prompt.md`)も変えない
+5. **コードの置き場。** petari のリポジトリに `src/pack/` を作り、slnmix の構成(`services/` を含む)のまま移す。M1 では CommonJS → ESM(相対 import に `.ts`)、mocha → vitest の書き換えと、petari の厳しい型設定(`noUncheckedIndexedAccess` / `exactOptionalPropertyTypes` / `verbatimModuleSyntax`)で出る型エラーの修正だけを行い、ロジックは変えない。petari の層の決まり(`core` は I/O 禁止)は今の `src/core/` にだけ効かせ、`src/pack/` は slnmix の deps 注入の書き方を続ける。コマンド層は `src/commands/pack.ts` / `build.ts`、`init.ts` は 2 つを合わせる。クリップボードは petari の `infra/clipboard.ts` に 1 本化する(Windows の書き方は既に同じ)
+6. **ドキュメント。** 設計書(本書)・WORKFLOW.md・SECURITY-REVIEW.md・README は petari のリポジトリへ移し、slnmix のリポジトリには移転先を書いた README だけを残す。利用者のリポジトリの `docs/README.md`(`slnmix init` が書いたもの)は slnmix の WORKFLOW.md を指しているので、slnmix 側の WORKFLOW.md は移転先への案内として残す
+
+### 25.4 移行の手順
+
+着手の条件: **会社の PC での確認(Windows のクリップボード・`petari watch`・実際の MSBuild での `slnmix build`・ashiato)が終わっていること。** そこで見つかる不具合は、今の 2 つのリポジトリで直す方が早い。統合中に直すと、直した箇所を移す作業が二重になる。
+
+| 段 | 内容 | 完了条件 |
+|---|---|---|
+| M1 | slnmix のコードとテスト・フィクスチャを petari の `src/pack/` へ移す(§25.3-5)。`petari pack` / `petari build` を足す。依存の置き換え(§25.3-3)もこの段 | slnmix の 448 件のテストと petari の 353 件のテストが vitest で通る。test-fixtures の全構成で、`petari pack` の出力が slnmix 0.22.x の出力とツール名の行を除いて一致する(移行前に slnmix で出力を書き出しておき、それと比べる)。実行時依存ゼロ |
+| M2 | 規約文の内蔵化(§25.3-1)、設定ファイル名とルートの統一(§25.3-2)、`petari init` の一本化 | 既存のプロジェクト(`slnmix.config.json` + 手を加えていない `protocol.md`)で `npx petari pack` の出力が M1 と同じ。`petari init` を 2 回実行しても 2 回目は何も変えない |
+| M3 | ドキュメントの移転(§25.3-6)、SECURITY-REVIEW.md を 1 パッケージの説明に書き直す。petari を publish | `npm pack petari@<版>` で中身を確認(ファイル数・`src/pack` の有無) |
+| M4 | slnmix を互換パッケージにして publish(依存は petari だけ)。数か月後に `npm deprecate slnmix` | `npx slnmix` / `npx slnmix init` / `npx slnmix build` が M3 の petari と同じ結果になる |
+
+版数の目安: petari 0.14.0(M1〜M3 をまとめて出す)、slnmix 0.23.0(M4)。
+
+### 25.5 既存の利用者への影響
+
+- コマンド: `npx slnmix` を `npx petari pack` に読み替えるだけ。互換パッケージがある間は `npx slnmix` のままでも動く
+- ファイル: `slnmix.config.json` は名前を変えなくても読まれる(`petari init` も勝手に名前を変えない)。`protocol.md` は手を加えていなければ消してよい(消さなくても動く)。`docs/`・`.petari/`・.gitignore の行・設計書の状態行はそのまま
+- 出力: ツール名の行だけが変わる。手順文の版数は変わらない(v9)
+- Node.js: 20.19 以上(今も `slnmix init` が petari を起動するため、実質同じ条件)
+
+### 25.6 導入審査の説明はどう変わるか
+
+統合と依存の置き換えが済むと、SECURITY-REVIEW.md の主な行は次のように短くなる。
+
+| 項目 | 今 | 統合後 |
+|---|---|---|
+| 入れるもの | slnmix と petari の 2 パッケージ(+ slnmix の依存 11 パッケージ) | petari の 1 パッケージだけ(実行時依存ゼロ・同梱サードパーティなし) |
+| 通信・待ち受け | どちらもなし | なし |
+| 起動する外部コマンド | PowerShell・pbcopy・xclip(クリップボード)、reg、git、code、MSBuild・vswhere、ブラウザの起動、`slnmix init` からの node | 同じ(`node` で petari を起動する分だけ無くなる) |
+
+### 25.7 言語汎用化(統合の後、別の段)
+
+統合が済んでから、1 つずつ決めて入れる。どれも統合の段には含めない。
+
+| 今の制限 | 案 | 決めること |
+|---|---|---|
+| VB.NET 以外は `extraRoots` に書いたディレクトリだけが対象で、`include` の既定は Web 系の拡張子だけ(§19) | git が管理しているファイル(`git ls-files --cached --others --exclude-standard`)を既定にする。バイナリ・大きいファイル・ロックファイルは除く | 「ディレクトリを走査しない」の原則を変えることになる。git の一覧はリポジトリが宣言したものなので「推測で対象を決めない」の趣旨には合う、と考える |
+| `.csproj` はスキップ | `.vbproj` と同じ読み方で対応する(Compile の既定グロブは `**/*.cs`) | Designer.cs の UI サマリーまで作るか |
+| `build` は MSBuild 専用 | 設定にビルドのコマンドを書けるようにする。MSBuild 形式のエラーなら周辺行つき、それ以外は出力の末尾をコピー | エラーの形式をいくつ読むか(tsc / javac など) |
+| 自動テストの判定は TS 前提(`autoTests.ts`) | 設定でテストのコマンドと置き場を宣言する | — |
+| 手順文は solution / generic の 2 種 | 言語ごとの差(Option Strict・Designer など)を差し込み部品にする | — |
+| .vbproj の環境(TargetFrameworkVersion・LangVersion)がパックに入らない | パックの先頭に環境の要約を入れる(VS2013 で使えない構文を避けさせる。2026-10-26 の手順文の見直しで挙げた改善候補の 1 番) | — |
+
+### 25.8 決めてほしいこと
+
+1. **名前**: petari に寄せる(推奨)/ slnmix に寄せる / 新しい名前
+2. **実行時依存ゼロ**: fast-xml-parser と ignore を自前に置き換える(推奨。自分で持つコードは増えるが、審査の説明が「依存ゼロ」の 1 行で済む)/ 2 つを petari の依存に加える
+3. **設定ファイル名**: `petari.config.json` を新しい名前にし、`slnmix.config.json` も読み続ける(推奨)/ `slnmix.config.json` のまま
+4. **VB.NET 以外の既定を「git が管理しているファイル」にするか**: 統合の後で決める(推奨)/ 今決める
+
+### 25.9 未対応(意図的スコープ外)
+
+- ashiato の統合(§25.2)
+- 出力ファイル名(`repomix-output.*`)の変更
+- `petari pack` を引数なしの既定にすること(§25.2)
+- `src/pack/` を petari の層(core / infra / commands)へ組み直すこと。M1 では構成を変えずに移し、必要になったら別の段で行う
