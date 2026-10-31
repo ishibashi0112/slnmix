@@ -312,6 +312,49 @@ suite("buildErrorReport", () => {
 		assert.ok(!excluded.includes("Kyoto-Sales-2024"), excluded);
 	});
 
+	test("エラーのないファイルの宣言の既定値を本文が引用しても伏せる", () => {
+		// コンパイラーは呼び出し先のシグネチャを省略可能な引数の既定値ごと引用する
+		const form = ["Public Class Form1", "    Sub A()", "        Db.Open()", "    End Sub", "End Class"];
+		const report = buildErrorReport(
+			[
+				{
+					origin: "C:\\src\\Form1.vb",
+					line: 3,
+					code: "BC30455",
+					message:
+						"パラメーター 'server' に対して引数が指定されていません ('Public Function Open(server As String, [password As String = \"Zq9TigerSecret\"]) As Boolean')。",
+				},
+			],
+			"",
+			{ rootDir: "C:\\src", readLines: () => form, mask: { strict: true } },
+		);
+		assert.ok(!report.includes("Zq9TigerSecret"), report);
+		assert.ok(report.includes("[password As String = \"[MASKED]\"]"), report);
+		assert.ok(report.includes("パラメーター 'server' に対して引数が指定されていません"), report);
+	});
+
+	test("長い文字列の一部に同じ並びがあるだけなら、伏せた値は見えているとみなさない", () => {
+		const lines = [
+			"Module M",
+			'    Dim title = "Kyoto-Sales-2024 Report"',
+			'    Dim password As String = "Sales-2024"',
+			'    Dim note = "abc def ghi"',
+			'    Dim secret As String = "def ghi"',
+			"End Module",
+		];
+		const report = buildErrorReport(
+			[
+				{ origin: "C:\\src\\M.vb", line: 3, code: "CA1303", message: 'リテラルを渡しています: "Sales-2024"' },
+				{ origin: "C:\\src\\M.vb", line: 5, code: "CA1303", message: 'リテラルを渡しています: "def ghi"' },
+			],
+			"",
+			{ rootDir: "C:\\src", readLines: () => lines, mask: { strict: true } },
+		);
+		assert.ok(!report.includes('"Sales-2024"'), report);
+		assert.ok(!report.includes('"def ghi"'), report);
+		assert.ok(report.includes('Dim title = "Kyoto-Sales-2024 Report"'), report);
+	});
+
 	test("generic の追加ディレクトリでない .vb は、パックと同じく VB のソースとしてだけ伏せる", () => {
 		const lines = ["Module M", "    Sub A()", "        user.Password = txtPasword.Text", "    End Sub", "End Module"];
 		const error = { origin: "C:\\src\\M.vb", line: 3, code: "BC30451", message: "'txtPasword' は宣言されていません。" };

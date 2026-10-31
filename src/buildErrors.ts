@@ -235,16 +235,56 @@ function addCandidates(into: MessageCandidates, maskedValues: string[]): void {
  */
 function filterVisible(candidates: MessageCandidates, visibleTexts: string[]): string[] {
 	const visibleWords = new Set<string>();
-	for (const text of visibleTexts) for (const word of text.match(WORD) ?? []) visibleWords.add(word);
+	const visibleTokens = new Set<string>();
+	for (const text of visibleTexts) {
+		for (const word of text.match(WORD) ?? []) visibleWords.add(word);
+		for (const token of text.split(TOKEN_BREAKS)) if (token !== "") visibleTokens.add(token);
+	}
 	const out = [...candidates.words].filter((w) => !visibleWords.has(w));
 	for (const value of candidates.values) {
-		// 見えていない語を含む値は、値そのものもまず見えていない(端の語が隣の文字と続いて別の語に見えて
-		// いるときだけは違うが、伏せる側に倒れるだけ)。文字列で探すのは、語がすべて見えている値と語を
-		// 含まない値だけにする(値の数 × 文面の長さの照合を減らす)
 		const words = value.match(WORD) ?? [];
-		if (words.some((w) => !visibleWords.has(w)) || !visibleTexts.some((t) => t.includes(value))) {
+		// 1 語だけの値は語として見えているかで決まる
+		if (words.length === 1 && words[0] === value) {
+			if (!visibleWords.has(value)) out.push(value);
+			continue;
+		}
+		// 値が見えているとみなすのは、区切り(空白・引用符・括弧・演算子など)で区切られたひとまとまりとして
+		// 見えているときだけ(長い文字列の一部に同じ並びがあるだけなら、値そのものは見えていない)。
+		// 見えていない語を含む値は、値そのものもまず見えていないので探さない
+		if (words.some((w) => !visibleWords.has(w)) || !isVisibleValue(value, visibleTokens, visibleTexts)) {
 			out.push(value);
 		}
+	}
+	return out;
+}
+
+/** 値のひとまとまりの区切り(空白を除く) */
+const VALUE_DELIMITERS = "\"'`()[\\]{}<>,;=&|+!?";
+const TOKEN_BREAKS = new RegExp(`[\\s${VALUE_DELIMITERS}]+`, "u");
+const DELIMITER = new RegExp(`[${VALUE_DELIMITERS}]`, "u");
+
+function isVisibleValue(value: string, visibleTokens: Set<string>, visibleTexts: string[]): boolean {
+	if (!TOKEN_BREAKS.test(value)) return visibleTokens.has(value);
+	// 区切りを含む値(空白を含む合言葉など)は文面で探し、前後が区切りか行の端のときだけ見えているとする。
+	// 空白を含む値は空白を区切りに数えない(長い文の一部に同じ語の並びがあるだけでは見えていない)
+	const spaced = /\s/u.test(value);
+	const isBoundary = (ch: string | undefined): boolean =>
+		ch === undefined || ch === "\n" || DELIMITER.test(ch) || (!spaced && /\s/u.test(ch));
+	return visibleTexts.some((text) => {
+		for (let at = text.indexOf(value); at >= 0; at = text.indexOf(value, at + 1)) {
+			if (isBoundary(text[at - 1]) && isBoundary(text[at + value.length])) return true;
+		}
+		return false;
+	});
+}
+
+/** 文字列の外の VB のコメントの始まりの文字(' ‘ ’)を空白にする(文字の位置は変えない) */
+function neutralizeVbComments(text: string): string {
+	let inString = false;
+	let out = "";
+	for (const ch of text) {
+		if (ch === '"') inString = !inString;
+		out += !inString && (ch === "'" || ch === "\u2018" || ch === "\u2019") ? " " : ch;
 	}
 	return out;
 }
@@ -324,7 +364,10 @@ export function buildErrorReport(
 		if (!maskedFiles.has(file)) {
 			const lines = options.readLines(file);
 			const vbSource =
-				/\.vb$/i.test(file) && options.genericTextFor !== undefined && !options.genericTextFor(file)
+				mask !== undefined &&
+				/\.vb$/i.test(file) &&
+				options.genericTextFor !== undefined &&
+				!options.genericTextFor(file)
 					? true
 					: undefined;
 			const maskOptions =
@@ -353,11 +396,17 @@ export function buildErrorReport(
 	const messageMasks = filterVisible(candidates, visibleTexts);
 	const maskMessage = (text: string): string => {
 		if (mask === undefined) return text;
-		if (unknown) {
-			// どの値を伏せたか分からないファイルがあるときは、VB のソースとしての伏せ方も重ねる
-			return maskCredentials(maskText(maskValues(text, messageMasks)), { vbSource: true, strict: mask.strict }).content;
+		// 本文そのものも VB のソースとして伏せる。コンパイラーはエラーのないファイルの宣言も引用する
+		// (省略可能な引数の既定値を含むシグネチャなど)。' で囲んだ引用をコメントとして読み飛ばさないよう、
+		// 文字列の外の ' を空白にしてから伏せる値を求め、元の本文で伏せる
+		const neutral = neutralizeVbComments(text);
+		const own = maskedValuesForDisplay([neutral], { path: "message.vb", strict: mask.strict, vbSource: true });
+		if (unknown || own === null) {
+			// どの値を伏せたか分からないときは、VB のソースとしての伏せ方をそのまま重ねる
+			return maskCredentials(maskText(maskValues(neutral, messageMasks)), { vbSource: true, strict: mask.strict })
+				.content;
 		}
-		return maskText(maskValues(text, messageMasks));
+		return maskText(maskValues(text, [...messageMasks, ...own]));
 	};
 	shown.forEach((error, index) => {
 		const file = resolveErrorFile(error);
