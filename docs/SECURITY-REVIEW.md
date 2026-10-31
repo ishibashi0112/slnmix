@@ -77,11 +77,13 @@ slnmix は `.sln` / `.vbproj`(Visual Studio のプロジェクト定義)を解�
 接続文字列の `Password=` などの値を、既定で `[MASKED]` に置き換えます。設定ファイルでは、
 `.NET` の appSettings(`<add key="DbPassword" value="..." />`)・My.Settings(`<setting name="DbPassword">` の
 `<value>`)・JSON などの `"password": "..."`・`DB_PASSWORD=...` の値も伏せます(slnmix 0.22.2 / petari 0.14.0 から)。
-コードの `dbPassword = "..."`・C# の `@"..."` / `$"..."`・文字列の中の `Password=\"...\"`・リテラルをまたいで続く
-接続文字列の値・リソース(.resx)の `<data name="DbPassword">` の値も同じです。
+コードの `dbPassword = "..."`(型の注釈つきの `password: string = "..."`・C# の自動プロパティの初期化子・Go の `:=` も)・
+C# の `@"..."` / `$"..."`・文字列の中の `Password=\"...\"`・リテラルをまたいで続く
+接続文字列の値・リソース(.resx)の `<data name="DbPassword">` の値も同じです。キーの末尾の番号(`Password2`・`DB_PASSWORD_2`)は除いて判定します。
 ODBC の `Pwd={...}` のように波括弧で囲んだ値も伏せます。書式の差し込みだけの値(`{0}`・`%s`・`${NAME}`。`${NAME:-既定値}` の既定値は伏せます)・
-真偽値(`SavePassword` の `True` など)・表示の文言は伏せません。`token` / `credentials` のようにコードでは別の意味でも使う語のキーは、値が秘密らしい
-(8 文字以上で数字か大文字と小文字を含む)ときだけ伏せます(字句解析の `token: "keyword"` などを伏せすぎないため)。
+真偽値(`SavePassword` の `True` など)・表示の文言は伏せません。`token` / `credentials` のようにコードでは別の意味でも使う語のキーは、
+コードの中では値が秘密らしい(8 文字以上で、空白や `$` `#` `%` 括弧・引用符などの記号を含まず、数字か大文字と小文字を含む)
+ときだけ伏せます(字句解析の `token: "keyword"` などを伏せすぎないため)。設定ファイル(appSettings・My.Settings)では値によらず伏せます。
 ランダムな英数字列(高エントロピー値)も既定で伏せます。置き換えた件数は実行時に表示され、
 パックのヘッダーには AI 向けに伏せ字であることを明記します。まだ伏せない形もあります
 (YAML の `password: ...` や INI の `db_password = ...` のような引用符のない値、C# の `DefaultSettingValue` 属性・複数行にわたる

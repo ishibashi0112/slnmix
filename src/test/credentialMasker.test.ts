@@ -389,6 +389,88 @@ suite("credentialMasker: 設定ファイルのキーと値", () => {
 		);
 	});
 
+	test("設定ファイルの token / credentials のキーは値によらず伏せる(真偽値は除く)", () => {
+		for (const input of [
+			'<add key="WebhookToken" value="Kanri#2024!" />',
+			'<setting name="WebhookToken" serializeAs="String">\n  <value>Kanri#2024!</value>\n</setting>',
+			'<Setting Name="WebhookToken" Type="System.String" Scope="User">\n  <Value Profile="(Default)">Kanri#2024!</Value>\n</Setting>',
+			'<add key="ApiCredentials" value="svc_batch:Kanri#2024" />',
+			'<add key="ApiToken" value="s3cr3t" />',
+		]) {
+			assert.ok(!maskCredentials(input, LOOSE).content.includes("Kanri") && !maskCredentials(input, LOOSE).content.includes("s3cr3t"), input);
+		}
+		assert.strictEqual(maskCredentials('<add key="RequireToken" value="true"/>', LOOSE).content, '<add key="RequireToken" value="true"/>');
+	});
+
+	test("番号の付いたキーも伏せる", () => {
+		for (const input of [
+			'<add key="Password2" value="Hunter2Secret" />',
+			"DB_PASSWORD_2=Hunter2Secret",
+			'{"password2": "Hunter2Secret"}',
+			'password_v2: "Hunter2Secret"',
+			'<setting name="DbPassword2" serializeAs="String"><value>Hunter2Secret</value></setting>',
+		]) {
+			assert.ok(!maskCredentials(input, LOOSE).content.includes("Hunter2"), input);
+		}
+		assert.strictEqual(maskCredentials('const sha256 = "abc"; const md5 = "x";', LOOSE).content, 'const sha256 = "abc"; const md5 = "x";');
+	});
+
+	test("型の注釈・VB の As 型・C# の自動プロパティ・Go の := の宣言の値も伏せる", () => {
+		for (const input of [
+			'const password: string = "Hunter2Secret";',
+			'db_password: str = "Hunter2Secret"',
+			'db_password: Optional[str] = "Hunter2Secret"',
+			'def connect(password: str = "Hunter2Secret"):',
+			'password := "Hunter2Secret"',
+			'public string DbPassword { get; set; } = "Hunter2Secret";',
+			'users:\n  - password: "Hunter2Secret"',
+			'- password: "Hunter2Secret"',
+			'    Dim pwd As String = "Hunter2Secret"',
+		]) {
+			assert.ok(!maskCredentials(input, LOOSE).content.includes("Hunter2"), input);
+		}
+		const plain = 'let token: string = "keyword";\nconst label: string = "password";';
+		assert.strictEqual(maskCredentials(plain, LOOSE).content, plain);
+	});
+
+	test("複数行の三項演算子・型の文字列リテラルの合併は伏せない", () => {
+		for (const input of [
+			'const m = isPw ?\n  "password" :\n  "text";',
+			'interface A {\n  user: string;\n  token: "abcdefgh1" | "b";\n}',
+		]) {
+			assert.strictEqual(maskCredentials(input, LOOSE).content, input, input);
+		}
+	});
+
+	test("閉じた単一引用符の後ろが日本語などでも引用符の中だけを伏せ、区切りでなければ後ろまで伏せる", () => {
+		assert.strictEqual(
+			maskCredentials("' 接続は Password='abc123'とする (確認済み)", { vbSource: true, strict: false }).content,
+			"' 接続は Password='[MASKED]'とする (確認済み)",
+		);
+		assert.ok(!maskCredentials("' 本番: Password='Hun;ter2'とする", { vbSource: true, strict: false }).content.includes("ter2"));
+		assert.ok(!maskCredentials("Password='a;b'cd;Server=x", LOOSE).content.includes("b'cd"));
+	});
+
+	test("\\ で終わる単一引用符の値も伏せる", () => {
+		for (const input of ["$db_password = 'Hunter2\\';", "db_password = 'Hunter2\\'", "db_password='Hunter2\\' # comment"]) {
+			assert.ok(!maskCredentials(input, LOOSE).content.includes("Hunter2"), input);
+		}
+	});
+
+	test("長い語を含む VB のコメントでも止まらない", function () {
+		this.timeout(20000);
+		const started = Date.now();
+		maskCredentials("x = 1 '" + "b".repeat(2000000), { vbSource: true, strict: true });
+		maskCredentials("Password='a'" + "b".repeat(1000000), { vbSource: true, strict: true });
+		assert.ok(Date.now() - started < 10000);
+	});
+
+	test("VB の真偽値の代入は伏せない", () => {
+		const vb = 'Dim savePassword As String = "True"\nMy.Settings.SavePassword = "False"';
+		assert.strictEqual(maskCredentials(vb, { vbSource: true, strict: false }).content, vb);
+		assert.ok(!maskCredentials('Dim savePassword As String = "Truthy1"', { vbSource: true, strict: false }).content.includes("Truthy1"));
+	});
+
 	test("日本語のキーは語の数によらず秘密系として伏せる", () => {
 		assert.ok(!maskCredentials('{ "パスワード": "Hunter2" }', LOOSE).content.includes("Hunter2"));
 		assert.ok(!maskCredentials('{ "DB接続パスワード": "abc" }', LOOSE).content.includes("abc"));
