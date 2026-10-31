@@ -80,11 +80,15 @@ slnmix は `.sln` / `.vbproj`(Visual Studio のプロジェクト定義)を解�
 コードの `dbPassword = "..."`(型の注釈つきの `password: string = "..."` / `password:str="..."`・C# の自動プロパティの初期化子・
 Go の `:=` も)・C# の `@"..."` / `$"..."`・Python の `u"..."` / `f"..."` / `r'...'`・文字列の中の `Password=\"...\"`・リテラルをまたいで続く
 接続文字列の値・リソース(.resx)の `<data name="DbPassword">` の値・VB のコメントアウトした宣言(`' Dim strPwd As String = "..."`)・
-VB の型文字つきの宣言(`Dim strPwd$ = "..."`)・URL の利用者情報のパスワード(`postgres://user:...@host`。`&amp;` などの文字参照も)・
-バッチファイルの `set DB_PASSWORD=...`(`&` でつないだもの・`if` / `@` の後のもの・MSBuild の `Exec` やビルド後イベントに書いたものも)・Dockerfile の `ENV` / `ARG`・
-docker compose の `- POSTGRES_PASSWORD=...`・`docker run -e DB_PASSWORD=...` も同じです(`.env` の行末の ` # コメント` は残します)。
-キーの末尾の番号(`Password2`・`DB_PASSWORD_2`・`SMTP_PASS1`)は除いて判定します(小文字の `pass1` / `pass2` だけのキーは
-コードの処理の段のことが多いため秘密系とみなしません)。
+VB の型文字つきの宣言(`Dim strPwd$ = "..."`)・URL の利用者情報のパスワード(`postgres://user:...@host`。`&amp;` などの文字参照・
+`${DB_PASSWORD:-既定値}` の既定値も)・
+バッチファイルの `set DB_PASSWORD=...`(`&` でつないだもの・`if` / `@` の後のもの・MSBuild の `Exec` やビルド後イベントに書いたものも。
+SQL の `UPDATE ... SET` は除きます)・Dockerfile の `ENV` / `ARG`(行末の `\` で続く行も)・
+docker compose の `- POSTGRES_PASSWORD=...`(引用符で囲んだものも)・`docker run -e DB_PASSWORD=...` も同じです
+(`.env` の引用符の外の行末の ` # コメント` は残します)。
+キーの末尾の番号(`Password2`・`DB_PASSWORD_2`・`SMTP_PASS1`)は除いて判定します(小文字の `pass1` / `pass2` だけのキー
+(`this.pass1` / `self.pass1` も)はコードの処理の段のことが多いため秘密系とみなしません)。区切りのないキー
+(`DBPASSWORD`・`PGPASSWORD`・`sqlpwd`)も末尾の `password` などで判定します。
 ODBC の `Pwd={...}` のように波括弧で囲んだ値も、閉じた波括弧の後が `;`・引用符・行末などなら `;` を含めて伏せます(それ以外は値の終わりまで伏せます)。書式の差し込みだけの値(`{0}`・`%s`・`${NAME}`。`${NAME:-既定値}` の既定値は伏せます)・
 真偽値(`SavePassword` の `True` など)・表示の文言・キー名そのものの値(`SET_PASSWORD = "SetPassword"`)は伏せません。
 `token` / `credentials` のようにコードでは別の意味でも使う語のキーは、値が秘密らしい(8 文字以上で、空白や `$` `#` `%` 括弧・
