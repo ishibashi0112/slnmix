@@ -1,7 +1,7 @@
 {
 	"name": "slnmix",
 	"version": "0.23.0",
-	"description": "petari に統合されました(npx petari pack / init / build)。このパッケージは引数をそのまま petari に渡す互換コマンドです。",
+	"description": "tazuna に統合されました(npx tazuna pack / init / build)。このパッケージは引数をそのまま tazuna に渡す互換コマンドです。",
 	"license": "MIT",
 	"author": "Yuki Sakakibara",
 	"repository": {
@@ -26,7 +26,7 @@
 		"sln",
 		"vbproj",
 		"vb.net",
-		"petari",
+		"tazuna",
 		"deprecated"
 	],
 	"scripts": {
@@ -37,7 +37,7 @@
 		"prepublishOnly": "npm run build"
 	},
 	"dependencies": {
-		"petari": "^0.15.0"
+		"tazuna": "^0.15.0"
 	},
 	"devDependencies": {
 		"@types/mocha": "^10.0.10",

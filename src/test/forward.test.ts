@@ -2,33 +2,33 @@ import * as assert from "node:assert";
 import { run, type RunDeps } from "../cli";
 import { planForward } from "../forward";
 
-suite("slnmix → petari の引数の読み替え", () => {
-  test("引数なし・入力とオプションは petari pack に渡す", () => {
+suite("slnmix → tazuna の引数の読み替え", () => {
+  test("引数なし・入力とオプションは tazuna pack に渡す", () => {
     assert.deepStrictEqual(planForward([]), {
       kind: "forward",
       args: ["pack"],
-      notice: "[slnmix] slnmix は petari に統合されました。同じ処理を npx petari pack で実行します(今後は npx petari pack を使ってください)。",
+      notice: "[slnmix] slnmix は tazuna に統合されました。同じ処理を npx tazuna pack で実行します(今後は npx tazuna pack を使ってください)。",
     });
     const plan = planForward(["MyApp.sln", "--task", "init", "--no-clip"]);
     assert.strictEqual(plan.kind, "forward");
     assert.deepStrictEqual(plan.kind === "forward" ? plan.args : [], ["pack", "MyApp.sln", "--task", "init", "--no-clip"]);
   });
 
-  test("init / build はそのまま petari の init / build に渡す", () => {
+  test("init / build はそのまま tazuna の init / build に渡す", () => {
     const init = planForward(["init", "--yes", "--no-repomix"]);
     assert.deepStrictEqual(init.kind === "forward" ? init.args : [], ["init", "--yes", "--no-repomix"]);
-    assert.ok(init.kind === "forward" && init.notice.includes("npx petari init"));
+    assert.ok(init.kind === "forward" && init.notice.includes("npx tazuna init"));
     const build = planForward(["build", "--configuration", "Release"]);
     assert.deepStrictEqual(build.kind === "forward" ? build.args : [], ["build", "--configuration", "Release"]);
-    assert.ok(build.kind === "forward" && build.notice.includes("npx petari build"));
+    assert.ok(build.kind === "forward" && build.notice.includes("npx tazuna build"));
   });
 
-  test("build という名前のフォルダは ./build と書けば入力として petari pack に渡る", () => {
+  test("build という名前のフォルダは ./build と書けば入力として tazuna pack に渡る", () => {
     const plan = planForward(["./build"]);
     assert.deepStrictEqual(plan.kind === "forward" ? plan.args : [], ["pack", "./build"]);
   });
 
-  test("--version は自分で答える(petari pack は受け付けない)", () => {
+  test("--version は自分で答える(tazuna pack は受け付けない)", () => {
     assert.deepStrictEqual(planForward(["--version"]), { kind: "version" });
     assert.deepStrictEqual(planForward(["MyApp.sln", "-v"]), { kind: "version" });
   });
@@ -43,7 +43,7 @@ suite("slnmix の起動", () => {
       calls,
       out,
       err,
-      locatePetari: () => ({ cliPath: "/x/node_modules/petari/dist/cli.js", version: "0.15.0" }),
+      locateTazuna: () => ({ cliPath: "/x/node_modules/tazuna/dist/cli.js", version: "0.15.0" }),
       ownVersion: () => "0.23.0",
       spawn: (command, args) => {
         calls.push([command, ...args]);
@@ -54,10 +54,10 @@ suite("slnmix の起動", () => {
     };
   }
 
-  test("petari の CLI を同じ node で起動し、終了コードを返す。統合の案内は標準エラーへ", () => {
+  test("tazuna の CLI を同じ node で起動し、終了コードを返す。統合の案内は標準エラーへ", () => {
     const deps = fakeDeps(3);
     assert.strictEqual(run(["--stdout"], deps), 3);
-    assert.deepStrictEqual(deps.calls, [[process.execPath, "/x/node_modules/petari/dist/cli.js", "pack", "--stdout"]]);
+    assert.deepStrictEqual(deps.calls, [[process.execPath, "/x/node_modules/tazuna/dist/cli.js", "pack", "--stdout"]]);
     assert.deepStrictEqual(deps.out, []);
     assert.strictEqual(deps.err.length, 1);
   });
@@ -66,16 +66,16 @@ suite("slnmix の起動", () => {
     const deps = fakeDeps();
     assert.strictEqual(run(["--version"], deps), 0);
     assert.deepStrictEqual(deps.calls, []);
-    assert.deepStrictEqual(deps.out, ["0.23.0(petari 0.15.0 を呼びます)"]);
+    assert.deepStrictEqual(deps.out, ["0.23.0(tazuna 0.15.0 を呼びます)"]);
   });
 
-  test("petari が見つからなければ案内して 1", () => {
+  test("tazuna が見つからなければ案内して 1", () => {
     const deps = fakeDeps();
-    deps.locatePetari = () => {
-      throw new Error("Cannot find module 'petari/package.json'");
+    deps.locateTazuna = () => {
+      throw new Error("Cannot find module 'tazuna/package.json'");
     };
     assert.strictEqual(run([], deps), 1);
     assert.deepStrictEqual(deps.calls, []);
-    assert.ok(deps.err[0]?.includes("npx petari"));
+    assert.ok(deps.err[0]?.includes("npx tazuna"));
   });
 });
