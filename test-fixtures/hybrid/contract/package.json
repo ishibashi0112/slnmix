@@ -1,5 +1,0 @@
-{
-  "name": "@app/contract",
-  "private": true,
-  "dependencies": { "zod": "^4.0.0" }
-}
