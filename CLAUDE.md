@@ -19,7 +19,7 @@ slnmix は 0.23.0 から **tazuna を呼ぶだけの互換パッケージ**。�
 
 ```bash
 pnpm run build        # dist/ へビルド(tsconfig.build.json)
-pnpm test             # tsc → mocha(--ui tdd)
+pnpm test             # out/ を消して tsc → node --test(node:test の suite / test。Node 22 以上)
 ```
 
 ## リリース手順

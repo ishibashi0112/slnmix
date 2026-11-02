@@ -1,4 +1,5 @@
 import * as assert from "node:assert";
+import { suite, test } from "node:test";
 import { run, type RunDeps } from "../cli";
 import { planForward } from "../forward";
 
