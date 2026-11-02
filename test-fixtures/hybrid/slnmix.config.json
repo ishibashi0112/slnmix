@@ -1,6 +1,0 @@
-{
-  "extraRoots": [
-    { "path": "apps/web", "kind": "web" },
-    { "path": "contract", "kind": "contract", "include": ["contract.ts", "package.json"] }
-  ]
-}

@@ -1,7 +1,7 @@
 {
 	"name": "slnmix",
-	"version": "0.22.2",
-	"description": "Repomix 互換フォーマットで .sln / .vbproj を 1 ファイルにエクスポートする CLI。ディレクトリ走査ではなくソリューションの論理構成(Link・DependentUpon 解決済み)に基づく。レガシー VB.NET / Shift_JIS 対応。",
+	"version": "0.23.0",
+	"description": "tazuna に統合されました(npx tazuna pack / init / build)。このパッケージは引数をそのまま tazuna に渡す互換コマンドです。",
 	"license": "MIT",
 	"author": "Yuki Sakakibara",
 	"repository": {
@@ -19,18 +19,15 @@
 		"dist"
 	],
 	"engines": {
-		"node": ">=18.11"
+		"node": ">=20.19.0"
 	},
 	"keywords": [
 		"repomix",
 		"sln",
 		"vbproj",
 		"vb.net",
-		"msbuild",
-		"legacy",
-		"visual-studio",
-		"llm",
-		"ai"
+		"tazuna",
+		"deprecated"
 	],
 	"scripts": {
 		"build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.build.json",
@@ -40,10 +37,7 @@
 		"prepublishOnly": "npm run build"
 	},
 	"dependencies": {
-		"fast-xml-parser": "^5.10.1",
-		"iconv-lite": "^0.7.3",
-		"ignore": "^7.0.6",
-		"petari": "^0.14.0"
+		"tazuna": "^0.15.0"
 	},
 	"devDependencies": {
 		"@types/mocha": "^10.0.10",
