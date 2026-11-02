@@ -32,17 +32,15 @@
 	"scripts": {
 		"build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.build.json",
 		"check-types": "tsc --noEmit",
-		"compile-tests": "tsc -p . --outDir out",
-		"test": "npm run compile-tests && mocha \"out/test/**/*.test.js\" --ui tdd",
+		"compile-tests": "node -e \"require('node:fs').rmSync('out',{recursive:true,force:true})\" && tsc -p . --outDir out",
+		"test": "npm run compile-tests && node --test \"out/test/**/*.test.js\"",
 		"prepublishOnly": "npm run build"
 	},
 	"dependencies": {
 		"tazuna": "^0.15.0"
 	},
 	"devDependencies": {
-		"@types/mocha": "^10.0.10",
 		"@types/node": "24.x",
-		"mocha": "^11.7.5",
 		"typescript": "^6.0.3"
 	}
 }
